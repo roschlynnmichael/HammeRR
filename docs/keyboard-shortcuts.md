@@ -4,7 +4,7 @@
 
 Assign up to two bindings to each viewport command.
 
-1. Click **Viewport → Keyboard shortcuts…**.
+1. Choose **Edit → Preferences → Keyboard shortcuts…**.
 2. Enter a label, command ID or binding in **Search commands**.
 3. Select a command.
 4. Set **Primary** and **Alternate**.
@@ -30,7 +30,8 @@ Cancel discards unsaved changes, including hidden search results.
 
 ## Limits
 
-- Bindings apply to the focused viewport. Text fields retain normal editing keys.
+- Bindings work anywhere in the window, except while you type in a text field. Pointing at the viewport gives it keyboard focus unless a text field is being edited.
+- Ctrl+K always opens **Search commands**. Like Ctrl+N, Ctrl+O, Ctrl+S, Ctrl+C, Ctrl+X and Ctrl+V, it cannot be assigned.
 - Projection, authoring and editor-visibility commands start unbound.
 - Hide requires selected objects and committed geometry. Show all restores only temporary editor-hidden objects, including during a preview.
 - Changing Objects/Faces clears obsolete selection and drafts. Faces also stops brush drawing and clipping.

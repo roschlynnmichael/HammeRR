@@ -1,6 +1,8 @@
-import { Button, ComboBox, ListView, ScrollView, SpinBox, TextEdit } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { Button, ComboBox, ListView, ScrollView, SpinBox, TextEdit } from "widgets.slint";
 
 export component BakedPropVerticesWindow inherits Window {
+    background: Theme.panel;
     title: "Baked prop vertices - HammeRR";
     width: 1020px;
     height: 900px;
@@ -49,10 +51,10 @@ export component BakedPropVerticesWindow inherits Window {
             ScrollView {
                 content-width: self.width;
                 VerticalLayout {
-                    padding: 20px;
+                    padding: Theme.space-xl;
                     spacing: 10px;
-                    Text { text: "Baked prop vertices"; font-size: 24px; font-weight: 600; }
-                    Text { text: root.build-state; wrap: word-wrap; color: #ffcb80; }
+                    Text { text: "Baked prop vertices"; font-size: Theme.font-display; font-weight: 600; }
+                    Text { text: root.build-state; wrap: word-wrap; color: Theme.warning; }
                     Text { text: root.channels; wrap: word-wrap; }
                     HorizontalLayout {
                         spacing: 8px;
@@ -63,7 +65,7 @@ export component BakedPropVerticesWindow inherits Window {
                         Button { text: "Refresh inspection"; clicked => { root.refresh-inspection(); } }
                         Rectangle { horizontal-stretch: 1; }
                     }
-                    Text { text: "Compiled props"; font-size: 18px; font-weight: 600; }
+                    Text { text: "Compiled props"; font-size: Theme.font-heading; font-weight: 600; }
                     Text { text: root.prop-page; }
                     ListView {
                         height: 110px;
@@ -75,7 +77,7 @@ export component BakedPropVerticesWindow inherits Window {
                         Button { text: "Next props"; enabled: root.next-props; clicked => { root.page-props(1); } }
                         Rectangle { horizontal-stretch: 1; }
                     }
-                    Text { text: "Hardware sections"; font-size: 18px; font-weight: 600; }
+                    Text { text: "Hardware sections"; font-size: Theme.font-heading; font-weight: 600; }
                     Text { text: root.section-page; }
                     ListView {
                         height: 85px;
@@ -90,7 +92,7 @@ export component BakedPropVerticesWindow inherits Window {
                     Text { text: root.selected; wrap: word-wrap; }
                     Button { text: "Frame prop origin"; enabled: root.can-frame; clicked => { root.frame-prop-origin(); } }
                     Button { text: root.source-selection-label; enabled: root.can-select-source; clicked => { root.select-source(); } }
-                    Text { text: "Frames a 32-unit box around the emitted native origin, not model or collision bounds. Selection stays unchanged."; wrap: word-wrap; color: #bac2ce; }
+                    Text { text: "Frames a 32-unit box around the emitted native origin, not model or collision bounds. Selection stays unchanged."; wrap: word-wrap; color: Theme.text-muted; }
                     HorizontalLayout {
                         spacing: 8px;
                         Button { text: "Show leaf bounds"; enabled: root.can-show-leaf-bounds; clicked => { root.show-leaf-bounds(); } }
@@ -98,8 +100,8 @@ export component BakedPropVerticesWindow inherits Window {
                         Rectangle { horizontal-stretch: 1; }
                     }
                     Text { text: root.leaf-bounds-state; wrap: word-wrap; }
-                    Text { text: "Purple boxes show every native leaf membership bound for this prop. These conservative bounds do not show its exact mesh or runtime visibility. The cyan visibility guide is separate."; wrap: word-wrap; color: #bac2ce; }
-                    Text { text: "Vertex colors"; font-size: 18px; font-weight: 600; }
+                    Text { text: "Purple boxes show every native leaf membership bound for this prop. These conservative bounds do not show its exact mesh or runtime visibility. The cyan visibility guide is separate."; wrap: word-wrap; color: Theme.text-muted; }
+                    Text { text: "Vertex colors"; font-size: Theme.font-heading; font-weight: 600; }
                     Text { text: "Local index · hardware index · R · G · B · A"; }
                     Text { text: root.vertex-page; }
                     ListView {
@@ -113,7 +115,7 @@ export component BakedPropVerticesWindow inherits Window {
                         Rectangle { horizontal-stretch: 1; }
                     }
                     Text { text: root.statistics; wrap: word-wrap; }
-                    Text { text: "Stored encoded RGB bytes, range 0–255. HDR is baked independently with the same byte encoding. Values do not measure linear irradiance or game screen brightness. Native ordinals and hardware rows belong to this build. Source addresses describe captured authored entities and helper routes. Select source replaces selection with the current root entity or its outer containing reference in Objects mode; it does not expand groups, unhide objects or open children. Reading rows and framing preserve selection."; wrap: word-wrap; color: #bac2ce; }
+                    Text { text: "Stored encoded RGB bytes, range 0–255. HDR is baked independently with the same byte encoding. Values do not measure linear irradiance or game screen brightness. Native ordinals and hardware rows belong to this build. Source addresses describe captured authored entities and helper routes. Select source replaces selection with the current root entity or its outer containing reference in Objects mode; it does not expand groups, unhide objects or open children. Reading rows and framing preserve selection."; wrap: word-wrap; color: Theme.text-muted; }
                     TextEdit { text: root.diagnostics; read-only: true; min-height: 65px; max-height: 100px; }
                 }
             }

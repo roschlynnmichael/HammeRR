@@ -1,4 +1,5 @@
-import { Button, TextEdit } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { Button, TextEdit } from "widgets.slint";
 
 export struct SkyAssetFaceRow {
     label: string,
@@ -8,6 +9,7 @@ export struct SkyAssetFaceRow {
 }
 
 export component SkyAssetsWindow inherits Window {
+    background: Theme.panel;
     title: "Sky assets - HammeRR";
     preferred-width: 980px;
     preferred-height: 860px;
@@ -31,9 +33,9 @@ export component SkyAssetsWindow inherits Window {
         }
     }
     VerticalLayout {
-        padding: 18px;
+        padding: Theme.space-xl;
         spacing: 10px;
-        Text { text: "Sky assets"; font-size: 24px; font-weight: 600; }
+        Text { text: "Sky assets"; font-size: Theme.font-display; font-weight: 600; }
         Text { text: root.family; wrap: word-wrap; }
         Text { text: root.summary; wrap: word-wrap; font-weight: 600; }
         if root.issues != "": TextEdit {
@@ -64,8 +66,8 @@ export component SkyAssetsWindow inherits Window {
                         primary: root.selected-face == index;
                         clicked => { root.selected-face = index; }
                     }
-                    Text { text: face.ldr-status; width: 90px; color: face.ldr-status == "ready" ? #a6d9ae : #e4ba87; }
-                    Text { text: face.hdr-status; width: 90px; color: face.hdr-status == "ready" ? #a6d9ae : #e4ba87; }
+                    Text { text: face.ldr-status; width: 90px; color: face.ldr-status == "ready" ? Theme.success : Theme.warning; }
+                    Text { text: face.hdr-status; width: 90px; color: face.hdr-status == "ready" ? Theme.success : Theme.warning; }
                 }
                 Rectangle { vertical-stretch: 1; }
             }
@@ -81,13 +83,13 @@ export component SkyAssetsWindow inherits Window {
                 }
             }
         }
-        Text { text: root.read-summary; wrap: word-wrap; color: #bac2ce; font-size: 12px; }
-        Text { text: root.scope; wrap: word-wrap; color: #bac2ce; font-size: 12px; }
+        Text { text: root.read-summary; wrap: word-wrap; color: Theme.text-muted; font-size: Theme.font; }
+        Text { text: root.scope; wrap: word-wrap; color: Theme.text-muted; font-size: Theme.font; }
         Text {
             text: "Inspects the applied world skyname. Apply properties before inspecting pending sky changes. Viewport Sky channel selects LDR or a stricter HDR editor preview. Structural readiness does not validate HDR pixel radiance. This inspection does not pack custom sky assets.";
             wrap: word-wrap;
-            color: #bac2ce;
-            font-size: 12px;
+            color: Theme.text-muted;
+            font-size: Theme.font;
         }
         HorizontalLayout {
             spacing: 8px;

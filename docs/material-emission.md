@@ -20,7 +20,8 @@ Bake light from an opaque world, detail or stationary brush-model surface.
 ![A white panel casts red baked light onto a surface and a prop in CS:S](images/material-emission-native.png)
 
 Blank text or **Remove override** turns emission off when **Native direct emission**
-is disabled. Disable that policy before clearing the file, or change both in one draft.
+and **Exact emission visibility** are disabled. Disable both before clearing
+the file, or change them together in one draft.
 **Fullbright** checks the file and sources but does not bake emission.
 Unused records are allowed;
 no rendered source faces means no emission is baked.
@@ -68,6 +69,8 @@ not the complete shader. Use one mode per material across LDR and HDR records.
 4. Set **Pitch Yaw Roll (Y Z X)** for an initial rotation, if needed.
 5. Apply a declared emission material to its source faces, then compile.
 
+For **Exact emission visibility**, the final emitting face must be axis-aligned
+and every source vertex must lie exactly on its native plane.
 The source uses its compiled initial pose. Other solids in the same model
 still block light. Supported child models use their assembled pose once.
 See [stationary shadow sources](brush-texture-shadows.md#cast-from-a-stationary-root-brush-model)
@@ -103,7 +106,7 @@ The radius conservatively reaches the farthest corner of the stored world-model
 bounds expanded by native cache extents of 32/32/128 units, rounded upward to
 native precision. This covers compiled-world receiver/cache bounds, without an
 automatic 2,000-unit cutoff or a coverage promise outside that world.
-Sampled maps, VHV and detail direct lighting remain, as does reflected ambient.
+Baked maps, VHV and detail direct lighting remain, as does reflected ambient.
 Only intrinsic direct emission is removed from indexed ambient and supplied by
 native selected or folded direct lighting instead.
 
@@ -118,6 +121,42 @@ existing indexed-ambient policy. **Fullbright** validates the configuration but
 does not emit native surface-light records. Child declarations cannot activate
 the policy.
 
+## Exact brush shadows
+
+Resolve brush shadows across the source area instead of sampling segments.
+
+1. Open **World settings…** and set **Emission file**.
+2. Enable **Exact emission visibility**, then click **Apply properties**.
+3. Compile with **Direct LDR** or **Direct LDR + HDR**.
+4. Open **Build details…**. **Emission visibility policy** should read
+   **Exact opaque convex hulls**. Check **Emission conversion bounds (dimensionless)**.
+
+Exact mode supports uniquely owned world/detail and eligible stationary
+**Shadows → Yes** `func_brush` emitting faces, at root or in supported assemblies.
+The final emitting plane must be axis-aligned, with every source vertex exactly
+on its native plane. Opaque brush casters may have oblique planes when their
+final hull is certified closed, bounded and convex. Every applicable original
+hull participates, including invisible boundaries. Eligible stationary brush
+models retain their existing global or same-model shadow scope.
+Unsupported casters, source support or numeric bounds stop the build.
+The previous BSP stays intact. The compiler does not switch to sampled shadows.
+Receivers beside a panel use its finite hull; crossing the panel's extended
+plane alone does not stop the build.
+For larger bakes, open **Build settings…**, increase **Lighting work limit
+(millions)**, then click **Apply work limit**. Numeric and memory limits still apply.
+
+Clipping uses exact rational arithmetic. Conversion to the floating lighting
+kernel has a reported bound of at most `1e-9` per receiver, before source colour
+and brightness. This is not an RGB, BSP quantization or native image error bound.
+**Native direct emission** keeps its separate point approximation.
+Disable **Exact emission visibility** to use the original sampled bake.
+
+Exact mode rejects oblique final emitting faces, nonzero native-plane support
+residuals, moving/parented/unrequested brush-model emitting sources,
+sky/alpha/unknown materials, terrain and prop shadow providers, and uncertified
+hulls. Checked arithmetic, fragment and conditioning limits also apply.
+**Fullbright** checks the setting and declarations without exact shadow admission.
+
 ## Limits
 
 - Sources: drawn opaque flat world, `func_detail` or eligible **Shadows → Yes**
@@ -130,7 +169,7 @@ the policy.
 - With the default policy, paired HDR requires a real authored point, spot or environment light.
   Zero brightness is allowed. The engine requires a nonempty HDR light table.
   In native mode, positive HDR surface records can provide that table.
-- Sampling can miss thin blockers or apertures between samples. **Detailed**
+- With exact visibility disabled, sampling can miss thin blockers or apertures. **Detailed**
   uses smaller cells and more work. Exceeded budgets and unconditioned
   source contacts stop the build; quality does not reduce automatically.
 - At most 262,144 cells per receiver, 48 subdivisions, 65,536 source sides and
