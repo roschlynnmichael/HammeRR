@@ -1,10 +1,16 @@
-use super::*;
-use crate::preference_file::DirectoryBinding;
-use std::{ffi::OsString, path::Path, sync::Arc};
+use std::ffi::OsString;
+use std::fs::{self, File};
+use std::io::Write;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+use source_formats::file_publication::DirectoryBinding;
+
+const MAX_SCAN: usize = 512;
 
 #[derive(Clone, Debug)]
 pub(super) struct SourceDirectory {
-    pub binding: DirectoryBinding,
+    pub(super) binding: DirectoryBinding,
     _retained: Arc<File>,
 }
 
@@ -22,11 +28,23 @@ impl SourceDirectory {
     }
 }
 
+#[derive(Clone)]
 pub(super) struct Directory {
-    pub binding: DirectoryBinding,
-    requested: PathBuf,
-    ancestor: File,
+    pub(super) binding: DirectoryBinding,
+    pub(super) requested: PathBuf,
+    ancestor: Arc<File>,
     file: Option<Arc<File>>,
+}
+
+#[cfg(windows)]
+fn open_dir_windows(path: &Path) -> Result<File, String> {
+    use std::os::windows::fs::OpenOptionsExt;
+    const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x02000000;
+    fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+        .open(path)
+        .map_err(|e| e.to_string())
 }
 
 impl Directory {
@@ -40,21 +58,21 @@ impl Directory {
         )?;
         let ancestor = {
             use rustix::fs::{Mode, OFlags};
-            rustix::fs::open(
-                binding.physical_ancestor(),
-                OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC | OFlags::NOFOLLOW,
-                Mode::empty(),
+            Arc::new(
+                rustix::fs::open(
+                    binding.physical_ancestor(),
+                    OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC | OFlags::NOFOLLOW,
+                    Mode::empty(),
+                )
+                .map(File::from)
+                .map_err(|error| error.to_string())?,
             )
-            .map(File::from)
-            .map_err(|error| error.to_string())?
         };
         if !binding.matches_ancestor(&ancestor.metadata().map_err(|error| error.to_string())?) {
             return Err("Prefab library directory changed; refresh it before continuing".into());
         }
         let file = if binding.suffix()?.as_os_str().is_empty() {
-            Some(Arc::new(
-                ancestor.try_clone().map_err(|error| error.to_string())?,
-            ))
+            Some(ancestor.clone())
         } else {
             None
         };
@@ -68,9 +86,37 @@ impl Directory {
         Ok(directory)
     }
 
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(windows)]
+    pub fn capture(requested: &Path) -> Result<Self, String> {
+        let binding = DirectoryBinding::capture(
+            requested,
+            "Prefab library",
+            "refresh it before continuing",
+        )?;
+        let ancestor = Arc::new(open_dir_windows(binding.physical_ancestor())?);
+        if !binding.matches_ancestor(&ancestor).map_err(|e| e.to_string())? {
+            return Err("Prefab library directory changed; refresh it before continuing".into());
+        }
+        let file = if binding.suffix()?.as_os_str().is_empty() {
+            Some(ancestor.clone())
+        } else if binding.physical_ancestor().join(binding.suffix()?).is_dir() {
+            Some(Arc::new(open_dir_windows(&binding.physical_ancestor().join(binding.suffix()?))?))
+        } else {
+            None
+        };
+        let directory = Self {
+            binding,
+            requested: std::path::absolute(requested).map_err(|e| e.to_string())?,
+            ancestor,
+            file,
+        };
+        directory.verify()?;
+        Ok(directory)
+    }
+
+    #[cfg(not(any(target_os = "linux", windows)))]
     pub fn capture(_requested: &Path) -> Result<Self, String> {
-        Err("Bound prefab library I/O requires Linux".into())
+        Err("Bound prefab library I/O requires Linux or Windows".into())
     }
 
     pub fn verify(&self) -> Result<(), String> {
@@ -78,12 +124,19 @@ impl Directory {
         match (&self.file, fs::symlink_metadata(&self.requested)) {
             (None, Err(error)) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
             (Some(file), Ok(current)) if current.is_dir() => {
-                let opened = file.metadata().map_err(|error| error.to_string())?;
                 #[cfg(unix)]
-                if (opened.dev(), opened.ino()) != (current.dev(), current.ino()) {
-                    return Err(
-                        "Prefab library directory changed; refresh it before continuing".into(),
-                    );
+                {
+                    use std::os::unix::fs::MetadataExt;
+                    let opened = file.metadata().map_err(|error| error.to_string())?;
+                    if (opened.dev(), opened.ino()) != (current.dev(), current.ino()) {
+                        return Err(
+                            "Prefab library directory changed; refresh it before continuing".into(),
+                        );
+                    }
+                }
+                #[cfg(windows)]
+                {
+                    let _ = file;
                 }
                 Ok(())
             }
@@ -105,6 +158,7 @@ impl Directory {
             use rustix::fs::{Mode, OFlags};
             let mut parent = self
                 .ancestor
+                .as_ref()
                 .try_clone()
                 .map_err(|error| error.to_string())?;
             for part in self.binding.suffix()?.components() {
@@ -126,8 +180,15 @@ impl Directory {
             self.file = Some(Arc::new(parent));
             self.verify()
         }
-        #[cfg(not(target_os = "linux"))]
-        Err("Bound prefab directory creation requires Linux".into())
+        #[cfg(windows)]
+        {
+            fs::create_dir_all(&self.requested).map_err(|e| e.to_string())?;
+            let opened = open_dir_windows(&self.requested)?;
+            self.file = Some(Arc::new(opened));
+            self.verify()
+        }
+        #[cfg(not(any(target_os = "linux", windows)))]
+        Err("Bound prefab directory creation requires Linux or Windows".into())
     }
 
     fn handle(&self) -> Result<&File, String> {
@@ -166,8 +227,24 @@ impl Directory {
             }
             Ok(names)
         }
-        #[cfg(not(target_os = "linux"))]
-        Err("Bound prefab library I/O requires Linux".into())
+        #[cfg(windows)]
+        {
+            let mut names = Vec::new();
+            for entry in fs::read_dir(&self.requested).map_err(|e| e.to_string())? {
+                let entry = entry.map_err(|e| e.to_string())?;
+                let name = entry.file_name();
+                if name == "." || name == ".." {
+                    continue;
+                }
+                if names.len() >= MAX_SCAN {
+                    return Err("Prefab storage exceeds 512 directory entries".into());
+                }
+                names.push(name);
+            }
+            Ok(names)
+        }
+        #[cfg(not(any(target_os = "linux", windows)))]
+        Err("Bound prefab library I/O requires Linux or Windows".into())
     }
 
     pub fn metadata(&self, name: &std::ffi::OsStr) -> Result<fs::Metadata, String> {
@@ -184,10 +261,15 @@ impl Directory {
             .map_err(|error| error.to_string())?;
             file.metadata().map_err(|error| error.to_string())
         }
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(windows)]
+        {
+            let path = self.requested.join(name);
+            fs::symlink_metadata(&path).map_err(|error| error.to_string())
+        }
+        #[cfg(not(any(target_os = "linux", windows)))]
         {
             let _ = name;
-            Err("Bound prefab library I/O requires Linux".into())
+            Err("Bound prefab library I/O requires Linux or Windows".into())
         }
     }
 
@@ -204,10 +286,15 @@ impl Directory {
             .map(File::from)
             .map_err(|error| error.to_string())
         }
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(windows)]
+        {
+            let path = self.requested.join(name);
+            File::open(&path).map_err(|e| e.to_string())
+        }
+        #[cfg(not(any(target_os = "linux", windows)))]
         {
             let _ = name;
-            Err("Bound prefab library I/O requires Linux".into())
+            Err("Bound prefab library I/O requires Linux or Windows".into())
         }
     }
 
@@ -225,9 +312,19 @@ impl Directory {
                 format!("Cannot rename prefab without replacing another entry: {error}")
             })
         }
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(windows)]
         {
-            Err("Atomic prefab renaming is supported on Linux only".into())
+            let from = self.requested.join(source);
+            let to = self.requested.join(destination);
+            if to.exists() {
+                return Err("Cannot rename prefab: destination already exists".into());
+            }
+            fs::rename(from, to).map_err(|e| e.to_string())
+        }
+        #[cfg(not(any(target_os = "linux", windows)))]
+        {
+            let _ = (source, destination);
+            Err("Atomic prefab renaming requires Linux or Windows".into())
         }
     }
 
@@ -237,14 +334,20 @@ impl Directory {
             rustix::fs::unlinkat(self.handle()?, name, rustix::fs::AtFlags::empty())
                 .map_err(|error| error.to_string())
         }
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(windows)]
         {
-            Err("Bound prefab deletion requires Linux".into())
+            let path = self.requested.join(name);
+            fs::remove_file(path).map_err(|e| e.to_string())
+        }
+        #[cfg(not(any(target_os = "linux", windows)))]
+        {
+            let _ = name;
+            Err("Bound prefab deletion requires Linux or Windows".into())
         }
     }
 
-    pub fn publication(&self, action: &str) -> Mutation {
-        Mutation {
+    pub fn publication(&self, action: &str) -> super::Mutation {
+        super::Mutation {
             warning: self.verify().err().map(|error| {
                 format!("Prefab was {action}, but the library could not be verified; refresh it before continuing: {error}")
             }),
@@ -283,37 +386,58 @@ impl Directory {
                 .ok_or("Prefab staging basename is missing")?
                 .to_owned();
             Ok(Stage {
-                temporary,
+                temporary: Some(temporary),
                 directory,
+                requested_dir: &self.requested,
                 basename,
             })
         }
-        #[cfg(not(target_os = "linux"))]
-        Err("Bound prefab staging requires Linux".into())
+        #[cfg(windows)]
+        {
+            let temporary = tempfile::Builder::new()
+                .prefix(".hammerr-prefab-")
+                .tempfile_in(&self.requested)
+                .map_err(|e| e.to_string())?;
+            let basename = temporary
+                .path()
+                .file_name()
+                .ok_or("Prefab staging basename is missing")?
+                .to_owned();
+            Ok(Stage {
+                temporary: Some(temporary),
+                directory: &self.ancestor,
+                requested_dir: &self.requested,
+                basename,
+            })
+        }
+        #[cfg(not(any(target_os = "linux", windows)))]
+        Err("Bound prefab staging requires Linux or Windows".into())
     }
 }
 
 pub(super) struct Stage<'a> {
-    temporary: tempfile::NamedTempFile,
+    temporary: Option<tempfile::NamedTempFile>,
+    #[allow(dead_code)]
     directory: &'a File,
+    requested_dir: &'a Path,
     basename: OsString,
 }
 
 impl Stage<'_> {
     pub fn write(&mut self, text: &str) -> Result<(), String> {
-        self.temporary
-            .write_all(text.as_bytes())
+        let temp = self.temporary.as_mut().ok_or("Prefab stage already published")?;
+        temp.write_all(text.as_bytes())
             .map_err(|error| error.to_string())?;
-        self.temporary
-            .as_file()
+        temp.as_file()
             .sync_all()
             .map_err(|error| error.to_string())
     }
 
     #[cfg(target_os = "linux")]
     fn owned(&self) -> Result<bool, String> {
-        let opened = self
-            .temporary
+        let temp = self.temporary.as_ref().ok_or("Prefab stage already published")?;
+        use std::os::unix::fs::MetadataExt;
+        let opened = temp
             .as_file()
             .metadata()
             .map_err(|error| error.to_string())?;
@@ -328,7 +452,7 @@ impl Stage<'_> {
         }
     }
 
-    pub fn publish(&self, destination: &str) -> Result<(), String> {
+    pub fn publish(&mut self, destination: &str) -> Result<(), String> {
         #[cfg(target_os = "linux")]
         {
             if !self.owned()? {
@@ -343,8 +467,18 @@ impl Stage<'_> {
             )
             .map_err(|error| error.to_string())
         }
-        #[cfg(not(target_os = "linux"))]
-        Err("Bound prefab publication requires Linux".into())
+        #[cfg(windows)]
+        {
+            let temp = self.temporary.take().ok_or("Prefab stage already published")?;
+            let target = self.requested_dir.join(destination);
+            temp.persist(&target).map_err(|e| e.to_string())?;
+            Ok(())
+        }
+        #[cfg(not(any(target_os = "linux", windows)))]
+        {
+            let _ = destination;
+            Err("Bound prefab publication requires Linux or Windows".into())
+        }
     }
 }
 

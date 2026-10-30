@@ -100,27 +100,58 @@ pub trait CaptureObserver {
     fn sample_progress(&mut self, current: usize, total: usize);
 }
 
+#[cfg(target_os = "linux")]
 mod adapter;
+#[cfg(target_os = "linux")]
 mod diagnostic;
+#[cfg(target_os = "linux")]
 mod guard;
+#[cfg(target_os = "linux")]
 mod isolation;
+#[cfg(target_os = "linux")]
 mod process;
+#[cfg(target_os = "linux")]
 mod util;
+#[cfg(target_os = "linux")]
 mod vdf;
+#[cfg(target_os = "linux")]
 mod worker;
 
+#[cfg(not(target_os = "linux"))]
+mod non_linux;
+
+#[cfg(target_os = "linux")]
 pub use adapter::{capture_staging_bsp, capture_staging_bsp_for_channel, preflight_vmf};
+#[cfg(target_os = "linux")]
 pub use diagnostic::{PplMidrange909Case, PplMidrange909Receipt, PplMidrange909Request};
+#[cfg(target_os = "linux")]
 pub use diagnostic::{PplMips931Case, PplMips931Receipt, PplMips931Request};
+#[cfg(target_os = "linux")]
 pub use diagnostic::{PplSpatial919Case, PplSpatial919Receipt, PplSpatial919Request};
+#[cfg(target_os = "linux")]
 pub use diagnostic::{PplUv857Case, PplUv857Receipt, PplUv857Request};
+#[cfg(target_os = "linux")]
 pub use guard::{resolve_environment, validate_environment};
+#[cfg(target_os = "linux")]
 pub use process::{capture, capture_with_cleanup};
+#[cfg(target_os = "linux")]
 pub use process::{
     diagnose_ppl_midrange909_with_cleanup, diagnose_ppl_mips931_with_cleanup,
     diagnose_ppl_spatial919_with_cleanup, diagnose_ppl_uv857_with_cleanup,
 };
 
+#[cfg(not(target_os = "linux"))]
+pub use non_linux::{
+    capture, capture_staging_bsp, capture_staging_bsp_for_channel, capture_with_cleanup,
+    diagnose_ppl_midrange909_with_cleanup, diagnose_ppl_mips931_with_cleanup,
+    diagnose_ppl_spatial919_with_cleanup, diagnose_ppl_uv857_with_cleanup, fingerprint,
+    preflight_vmf, resolve_environment, validate_environment, worker_entry, PplMidrange909Case,
+    PplMidrange909Receipt, PplMidrange909Request, PplMips931Case, PplMips931Receipt,
+    PplMips931Request, PplSpatial919Case, PplSpatial919Receipt, PplSpatial919Request,
+    PplUv857Case, PplUv857Receipt, PplUv857Request,
+};
+
+#[cfg(target_os = "linux")]
 pub fn worker_entry(arguments: Vec<std::ffi::OsString>) -> io::Result<()> {
     match arguments.as_slice() {
         [mode, root, steam] if mode == "--steam-identity" => {
@@ -157,6 +188,7 @@ pub fn worker_entry(arguments: Vec<std::ffi::OsString>) -> io::Result<()> {
     }
 }
 
+#[cfg(target_os = "linux")]
 pub fn fingerprint(path: &std::path::Path) -> io::Result<String> {
     util::hash_file(path, util::MAX_BSP)
 }

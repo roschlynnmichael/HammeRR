@@ -861,7 +861,8 @@ fn worker_path() -> Result<PathBuf, String> {
     } else {
         directory
     };
-    let worker = directory.join("hammerr-physics");
+    let worker_name = format!("hammerr-physics{}", std::env::consts::EXE_SUFFIX);
+    let worker = directory.join(&worker_name);
     if !worker.is_file() {
         return Err("Engine physics needs hammerr-physics beside the editor/compiler; build with cargo build -p editor -p compiler".into());
     }
@@ -968,9 +969,10 @@ pub(crate) fn bake(
         .arg(&directory)
         .arg(&input)
         .arg(&output)
-        .arg(&failure)
-        .env("LD_LIBRARY_PATH", &directory)
-        .stdin(Stdio::null())
+        .arg(&failure);
+        #[cfg(unix)]
+        command.env("LD_LIBRARY_PATH", &directory);
+        command.stdin(Stdio::null())
         .stdout(Stdio::from(
             log_file.try_clone().map_err(|error| error.to_string())?,
         ))

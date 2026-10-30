@@ -1,4 +1,5 @@
 #![recursion_limit = "256"]
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod atlas_ui;
 mod carve_ui;

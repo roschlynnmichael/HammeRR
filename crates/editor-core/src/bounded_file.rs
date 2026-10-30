@@ -41,11 +41,20 @@ fn open_target(path: &Path) -> io::Result<File> {
         .open(path)
 }
 
-#[cfg(not(unix))]
+#[cfg(windows)]
+fn open_target(path: &Path) -> io::Result<File> {
+    let metadata = fs::symlink_metadata(path)?;
+    if metadata.file_type().is_symlink() {
+        return Err(io::Error::other("File cannot be a symlink"));
+    }
+    File::open(path)
+}
+
+#[cfg(not(any(unix, windows)))]
 fn open_target(_path: &Path) -> io::Result<File> {
     Err(io::Error::new(
         io::ErrorKind::Unsupported,
-        "Bounded opened-target reads require Unix",
+        "Bounded opened-target reads require Unix or Windows",
     ))
 }
 

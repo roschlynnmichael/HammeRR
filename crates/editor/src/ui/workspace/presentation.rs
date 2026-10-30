@@ -1,12 +1,17 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
+#[cfg(unix)]
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+#[cfg(unix)]
 const IPC_TIMEOUT: Duration = Duration::from_secs(2);
+#[cfg(unix)]
 const MAX_REPLY_BYTES: u64 = 8192;
+#[cfg(unix)]
 const SILENT_RULE: &str = r#"/eval if _G.hammerr_background_display_v1 == nil then _G.hammerr_background_display_v1 = hl.window_rule({ name = 'hammerr-background-display-v1', match = { title = '(?s)^HammeRR background: .* - HammeRR$' }, no_initial_focus = true }) end; _G.hammerr_background_display_v1:set_enabled(true); assert(_G.hammerr_background_display_v1:is_enabled())"#;
 
+#[cfg(unix)]
 pub(super) async fn prepare_silent_show() -> Result<(), String> {
     let signature = std::env::var("HYPRLAND_INSTANCE_SIGNATURE")
         .map_err(|_| "Silent document display requires Hyprland with Lua window rules")?;
@@ -31,6 +36,7 @@ pub(super) async fn prepare_silent_show() -> Result<(), String> {
     })
 }
 
+#[cfg(unix)]
 async fn install_rule(socket: PathBuf) -> Result<(), String> {
     let mut stream = tokio::net::UnixStream::connect(socket)
         .await
@@ -56,5 +62,10 @@ async fn install_rule(socket: PathBuf) -> Result<(), String> {
             "Hyprland did not admit the background window rule: {response}"
         ));
     }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+pub(super) async fn prepare_silent_show() -> Result<(), String> {
     Ok(())
 }

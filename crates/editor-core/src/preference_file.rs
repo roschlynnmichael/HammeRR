@@ -363,7 +363,7 @@ impl<N: AsRef<OsStr>> CoordinatedFile<'_, N> {
     ) -> Result<Publication, SaveError> {
         let label = self.label;
         let reload = self.reload;
-        if !cfg!(target_os = "linux") {
+        if !cfg!(any(target_os = "linux", windows)) {
             return Err(SaveError::failure(format!(
                 "Coordinated {label} writes require Linux"
             )));
