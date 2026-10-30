@@ -2,8 +2,8 @@
 .SYNOPSIS
     HammeRR Native Windows Installer (Source / Dev Tree)
 .DESCRIPTION
-    Installs HammeRR Map Editor, registers file associations (.vmf),
-    creates Desktop and Start Menu shortcuts, and registers in Windows Installed Apps.
+    Cleans previous versions, installs HammeRR Map Editor, registers .vmf file associations,
+    creates Desktop and Start Menu shortcuts with high-res icon, and registers in Windows Installed Apps.
 #>
 [CmdletBinding()]
 param(
@@ -23,6 +23,7 @@ Write-Host "========================================" -ForegroundColor Cyan
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Definition
 $RootDir = (Resolve-Path "$ScriptDir\..\..").Path
 $ReleaseDir = Join-Path $RootDir "target\release"
+$AssetsDir = Join-Path $RootDir "assets"
 
 # Verify binaries exist
 $RequiredBinaries = @("editor.exe", "hammerr-compile.exe", "hammerr-physics.exe", "hammerr-headless.exe")
@@ -46,36 +47,57 @@ if (-not $Silent) {
     }
 }
 
-# Create installation directory
+# 1. Clean previous versions & terminate active processes
+Write-Host "`n[1/6] Stopping any running HammeRR processes..." -ForegroundColor Gray
+$processes = @("hammerr", "editor", "hammerr-compile", "hammerr-physics", "hammerr-headless", "hammerr-native-runtime")
+foreach ($proc in $processes) {
+    Stop-Process -Name $proc -Force -ErrorAction SilentlyContinue
+}
+Start-Sleep -Milliseconds 400
+
+# 2. Create installation directory
+Write-Host "[2/6] Preparing installation directory..." -ForegroundColor Gray
 if (-not (Test-Path $InstallPath)) {
-    Write-Host "Creating directory: $InstallPath" -ForegroundColor Gray
     New-Item -ItemType Directory -Path $InstallPath -Force | Out-Null
 }
 
-# Copy executables
-Write-Host "`nInstalling binaries..." -ForegroundColor Green
+# 3. Copy executables & assets
+Write-Host "[3/6] Installing binaries & assets..." -ForegroundColor Gray
 
 # Install main editor as hammerr.exe and editor.exe
 Copy-Item (Join-Path $ReleaseDir "editor.exe") (Join-Path $InstallPath "hammerr.exe") -Force
 Copy-Item (Join-Path $ReleaseDir "editor.exe") (Join-Path $InstallPath "editor.exe") -Force
-Write-Host "  [OK] hammerr.exe (Main GUI Application)" -ForegroundColor Gray
+Write-Host "  [OK] hammerr.exe (Main GUI Application)" -ForegroundColor DarkGray
 
 # Install compiler & physics
 Copy-Item (Join-Path $ReleaseDir "hammerr-compile.exe") (Join-Path $InstallPath "hammerr-compile.exe") -Force
-Write-Host "  [OK] hammerr-compile.exe (Map Compiler)" -ForegroundColor Gray
+Write-Host "  [OK] hammerr-compile.exe (Map Compiler)" -ForegroundColor DarkGray
 
 Copy-Item (Join-Path $ReleaseDir "hammerr-physics.exe") (Join-Path $InstallPath "hammerr-physics.exe") -Force
-Write-Host "  [OK] hammerr-physics.exe (Engine Physics Worker)" -ForegroundColor Gray
+Write-Host "  [OK] hammerr-physics.exe (Engine Physics Worker)" -ForegroundColor DarkGray
 
 Copy-Item (Join-Path $ReleaseDir "hammerr-headless.exe") (Join-Path $InstallPath "hammerr-headless.exe") -Force
-Write-Host "  [OK] hammerr-headless.exe (AI/MCP Headless Server)" -ForegroundColor Gray
+Write-Host "  [OK] hammerr-headless.exe (AI/MCP Headless Server)" -ForegroundColor DarkGray
 
 if (Test-Path (Join-Path $ReleaseDir "hammerr-native-runtime.exe")) {
     Copy-Item (Join-Path $ReleaseDir "hammerr-native-runtime.exe") (Join-Path $InstallPath "hammerr-native-runtime.exe") -Force
-    Write-Host "  [OK] hammerr-native-runtime.exe" -ForegroundColor Gray
+    Write-Host "  [OK] hammerr-native-runtime.exe" -ForegroundColor DarkGray
 }
 
-# Create shortcuts
+# Copy icons
+$IconPath = Join-Path $InstallPath "icon.ico"
+if (Test-Path (Join-Path $AssetsDir "icon.ico")) {
+    Copy-Item (Join-Path $AssetsDir "icon.ico") $IconPath -Force
+    Copy-Item (Join-Path $AssetsDir "icon.png") (Join-Path $InstallPath "icon.png") -Force
+    Write-Host "  [OK] High-resolution application icons installed" -ForegroundColor DarkGray
+}
+
+# Copy uninstaller scripts into installation path
+Copy-Item (Join-Path $ScriptDir "Uninstall-HammeRR.ps1") (Join-Path $InstallPath "Uninstall-HammeRR.ps1") -Force -ErrorAction SilentlyContinue
+Copy-Item (Join-Path $ScriptDir "Uninstall-HammeRR.bat") (Join-Path $InstallPath "Uninstall-HammeRR.bat") -Force -ErrorAction SilentlyContinue
+
+# 4. Create shortcuts
+Write-Host "[4/6] Creating shortcuts..." -ForegroundColor Gray
 try {
     $WshShell = New-Object -ComObject WScript.Shell
 
@@ -89,8 +111,11 @@ try {
             $StartMenuShortcut.TargetPath = Join-Path $InstallPath "hammerr.exe"
             $StartMenuShortcut.WorkingDirectory = $InstallPath
             $StartMenuShortcut.Description = "HammeRR Map Editor for Source Engine"
+            if (Test-Path $IconPath) {
+                $StartMenuShortcut.IconLocation = "$IconPath,0"
+            }
             $StartMenuShortcut.Save()
-            Write-Host "  [OK] Start Menu Shortcut created" -ForegroundColor Gray
+            Write-Host "  [OK] Start Menu Shortcut created" -ForegroundColor DarkGray
         } catch {
             Write-Warning "Could not create Start Menu shortcut: $_"
         }
@@ -103,8 +128,11 @@ try {
             $DesktopShortcut.TargetPath = Join-Path $InstallPath "hammerr.exe"
             $DesktopShortcut.WorkingDirectory = $InstallPath
             $DesktopShortcut.Description = "HammeRR Map Editor"
+            if (Test-Path $IconPath) {
+                $DesktopShortcut.IconLocation = "$IconPath,0"
+            }
             $DesktopShortcut.Save()
-            Write-Host "  [OK] Desktop Shortcut created" -ForegroundColor Gray
+            Write-Host "  [OK] Desktop Shortcut created" -ForegroundColor DarkGray
         } catch {
             Write-Warning "Could not create Desktop shortcut: $_"
         }
@@ -113,44 +141,32 @@ try {
     Write-Warning "Could not initialize WScript.Shell: $_"
 }
 
-# Register .vmf file association
+# 5. Register .vmf file association
 if (-not $NoFileAssociation) {
+    Write-Host "[5/6] Registering .vmf file association..." -ForegroundColor Gray
     try {
         $RegBase = "HKCU:\Software\Classes"
         New-Item -Path "$RegBase\.vmf" -Value "HammeRR.Vmf" -Force | Out-Null
         New-Item -Path "$RegBase\.vmf" -Name "Content Type" -Value "text/plain" -Force | Out-Null
         New-Item -Path "$RegBase\HammeRR.Vmf" -Value "Valve Map Format (.vmf)" -Force | Out-Null
-        New-Item -Path "$RegBase\HammeRR.Vmf\DefaultIcon" -Value "`"$InstallPath\hammerr.exe`",0" -Force | Out-Null
+        $assocIcon = if (Test-Path $IconPath) { "`"$IconPath`",0" } else { "`"$InstallPath\hammerr.exe`",0" }
+        New-Item -Path "$RegBase\HammeRR.Vmf\DefaultIcon" -Value $assocIcon -Force | Out-Null
         New-Item -Path "$RegBase\HammeRR.Vmf\shell\open\command" -Value "`"$InstallPath\hammerr.exe`" `"%1`"" -Force | Out-Null
-        Write-Host "  [OK] .vmf file association registered" -ForegroundColor Gray
+        Write-Host "  [OK] .vmf file association registered with icon" -ForegroundColor DarkGray
     } catch {
         Write-Warning "Could not register file association: $_"
     }
 }
 
-# Create Uninstaller script
+# 6. Create Uninstaller script & Register in Windows Add/Remove Programs
+Write-Host "[6/6] Registering uninstaller..." -ForegroundColor Gray
 $DesktopDir = [Environment]::GetFolderPath('Desktop')
 $StartMenuDir = Join-Path ([Environment]::GetFolderPath('Programs')) "HammeRR"
 $UninstallerScript = @"
 @echo off
-echo Uninstalling HammeRR...
-taskkill /F /IM hammerr.exe 2>nul
-taskkill /F /IM editor.exe 2>nul
-taskkill /F /IM hammerr-compile.exe 2>nul
-taskkill /F /IM hammerr-headless.exe 2>nul
-
-reg delete "HKCU\Software\Classes\.vmf" /f 2>nul
-reg delete "HKCU\Software\Classes\HammeRR.Vmf" /f 2>nul
-reg delete "HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\HammeRR" /f 2>nul
-
-del /F /Q "$StartMenuDir\HammeRR.lnk" 2>nul
-rmdir /Q "$StartMenuDir" 2>nul
-del /F /Q "$DesktopDir\HammeRR.lnk" 2>nul
-
-echo Removing files...
-cd /d "%TEMP%"
-rmdir /S /Q "$InstallPath" 2>nul
-echo HammeRR has been successfully uninstalled.
+title Uninstall HammeRR
+echo Terminating running processes and removing HammeRR...
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0Uninstall-HammeRR.ps1"
 pause
 "@
 try {
@@ -159,7 +175,6 @@ try {
     Write-Warning "Could not write uninstall.cmd: $_"
 }
 
-# Register in Windows Add/Remove Programs
 try {
     $UninstallReg = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\HammeRR"
     New-Item -Path $UninstallReg -Force | Out-Null
@@ -168,19 +183,19 @@ try {
     Set-ItemProperty -Path $UninstallReg -Name "Publisher" -Value "HammeRR Team"
     Set-ItemProperty -Path $UninstallReg -Name "InstallLocation" -Value $InstallPath
     Set-ItemProperty -Path $UninstallReg -Name "UninstallString" -Value "`"$InstallPath\uninstall.cmd`""
-    Set-ItemProperty -Path $UninstallReg -Name "DisplayIcon" -Value "$InstallPath\hammerr.exe,0"
+    $displayIconVal = if (Test-Path $IconPath) { "$IconPath,0" } else { "$InstallPath\hammerr.exe,0" }
+    Set-ItemProperty -Path $UninstallReg -Name "DisplayIcon" -Value $displayIconVal
     Set-ItemProperty -Path $UninstallReg -Name "NoModify" -Value 1 -Type DWord
     Set-ItemProperty -Path $UninstallReg -Name "NoRepair" -Value 1 -Type DWord
-    Write-Host "  [OK] Registered in Windows Installed Apps" -ForegroundColor Gray
+    Write-Host "  [OK] Registered in Windows Installed Apps" -ForegroundColor DarkGray
 } catch {
     Write-Warning "Could not register uninstaller in Registry: $_"
 }
 
-Write-Host "`n========================================" -ForegroundColor Green
-Write-Host "  HammeRR Successfully Installed!        " -ForegroundColor Green
-Write-Host "========================================" -ForegroundColor Green
+Write-Host "`n==================================================" -ForegroundColor Green
+Write-Host "      HammeRR Successfully Installed!             " -ForegroundColor Green
+Write-Host "==================================================" -ForegroundColor Green
 Write-Host "Location: $InstallPath\hammerr.exe"
 Write-Host "Start Menu: HammeRR"
 Write-Host "Desktop Shortcut: HammeRR.lnk"
-Write-Host "File Association: .vmf maps will open in HammeRR"
-Write-Host ""
+Write-Host "File Association: .vmf maps will open in HammeRR`n"

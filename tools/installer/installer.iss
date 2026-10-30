@@ -21,6 +21,7 @@ OutputBaseFilename=HammeRR-Setup-v{#MyAppVersion}
 Compression=lzma2/ultra64
 SolidCompression=yes
 WizardStyle=modern
+SetupIconFile=..\..\assets\icon.ico
 ChangesAssociations=yes
 ArchitecturesInstallIn64BitMode=x64compatible
 ArchitecturesAllowed=x64compatible
