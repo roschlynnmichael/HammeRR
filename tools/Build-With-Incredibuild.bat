@@ -35,8 +35,8 @@ if %ERRORLEVEL% neq 0 (
 
 echo.
 echo [OK] Incredibuild compilation succeeded!
-echo Updating distribution folder...
-powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "& { $Dist = '.\dist\HammeRR-Windows-v0.1.0'; Copy-Item '.\target\release\editor.exe' \"$Dist\hammerr.exe\" -Force; Copy-Item '.\target\release\editor.exe' \"$Dist\editor.exe\" -Force; Copy-Item '.\target\release\hammerr-compile.exe' \"$Dist\hammerr-compile.exe\" -Force; Copy-Item '.\target\release\hammerr-physics.exe' \"$Dist\hammerr-physics.exe\" -Force; Copy-Item '.\target\release\hammerr-headless.exe' \"$Dist\hammerr-headless.exe\" -Force; if (Test-Path '.\target\release\hammerr-native-runtime.exe') { Copy-Item '.\target\release\hammerr-native-runtime.exe' \"$Dist\hammerr-native-runtime.exe\" -Force }; Compress-Archive -Path \"$Dist\*\" -DestinationPath '.\dist\HammeRR-Windows-v0.1.0.zip' -Force; Write-Host 'Distribution packages successfully updated.' -ForegroundColor Green }"
+echo Updating distribution folder and zip package...
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0Package-Dist.ps1"
 
 echo.
 echo ===================================================
