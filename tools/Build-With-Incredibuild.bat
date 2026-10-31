@@ -17,10 +17,14 @@ if not exist "%IB_CONSOLE%" (
     exit /b 1
 )
 
-echo Launching Cargo build under Incredibuild with visual monitor...
+set "CORES=%NUMBER_OF_PROCESSORS%"
+if "%CORES%"=="" set "CORES=16"
+
+echo Detected %CORES% CPU cores.
+echo Launching Cargo build utilizing full CPU parallelism under Incredibuild...
 echo.
 
-"%IB_CONSOLE%" /COMMAND="cargo build --release --bins" /OPENMONITOR /TITLE="HammeRR Windows Release Build"
+"%IB_CONSOLE%" /COMMAND="cargo build --release --bins --jobs %CORES%" /KEEPORIGJOBSNUM /MAXCPUS=%CORES% /OPENMONITOR /TITLE="HammeRR Windows Release Build (All Cores)"
 
 if %ERRORLEVEL% neq 0 (
     echo.

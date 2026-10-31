@@ -53,3 +53,8 @@ debug = "line-tables-only"
 
 [profile.dev.package.editor]
 debug = "line-tables-only"
+
+[profile.release]
+opt-level = 3
+codegen-units = 16
+
