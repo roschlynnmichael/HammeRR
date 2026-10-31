@@ -1,7 +1,9 @@
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::cmp::Ordering;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, btree_map::Entry};
 use std::f64::consts::PI;
+use std::ops::ControlFlow;
+use std::rc::Rc;
 use std::sync::Arc;
 
 use glam::{DVec2, DVec3};
@@ -11,7 +13,7 @@ use source_formats::vmf::{Entity, Properties, Solid};
 
 use super::bake::{Allocation, Budget};
 use super::radiance::SourceBoundary;
-use super::shadows::ShadowIndex;
+use super::shadows::{ShadowIndex, ShadowObject};
 use super::terrain_shadows::TerrainTriangle;
 use super::transport::Scene;
 use super::{Occluder, ReceiverAngularMode};
@@ -19,6 +21,7 @@ use crate::asset_sources::BuildMaterialSources;
 use crate::materials::{Materials, Requirements};
 use crate::{Control, Diagnostic, Options, Report, SkyQuality, map::Map};
 
+mod cutout;
 mod exact;
 pub(super) mod native;
 mod texture;
@@ -493,7 +496,7 @@ pub(crate) fn preflight<'a>(
         channel_rays: [0; 2],
         native_surface_lights: [0; 2],
         visibility_policy: if exact_enabled {
-            "exact_opaque_convex_hull_topology_bounded_kernel_conversion"
+            "exact_binary_cutout_convex_hull_and_mesh_triangle_topology_bounded_kernel_conversion"
         } else {
             "sampled_segments"
         },
@@ -506,7 +509,7 @@ pub(crate) fn preflight<'a>(
         },
     };
     let visibility = if exact_enabled {
-        "Exact emission visibility requests complete certified original opaque-convex-hull shadow topology with bounded kernel conversion; unsupported providers, sources, arithmetic or exhausted resources fail the request"
+        "Exact emission visibility requests complete certified original opaque or binary-cutout convex-hull, native terrain-triangle and static-prop mesh-triangle shadow topology with bounded kernel conversion; unsupported providers, sources, arithmetic or exhausted resources fail the request"
     } else {
         "Material emission uses sampled segment shadows"
     };
@@ -673,6 +676,14 @@ pub(super) struct Declarations {
     _allocation: Allocation,
 }
 
+impl Declarations {
+    pub(super) fn exact_visibility(&self) -> bool {
+        self.exact_enabled
+    }
+}
+
+type SourceFragments = BTreeMap<[u8; 3], Vec<[DVec3; 3]>>;
+
 struct Source {
     face: usize,
     material: Option<Arc<str>>,
@@ -682,6 +693,7 @@ struct Source {
     triangles: Vec<[DVec3; 3]>,
     radiance: [DVec3; 2],
     boundary: SourceBoundary,
+    exact_face: Option<Rc<exact::SourceFace>>,
 }
 
 pub(super) struct NativePatch<'a> {
@@ -696,6 +708,7 @@ pub(super) struct NativePatch<'a> {
 
 pub(super) struct Prepared {
     sources: Vec<Source>,
+    cutouts: Option<cutout::Cache>,
     stats: MaterialEmissionStats,
     cells: [Cell<usize>; 2],
     rays: [Cell<usize>; 2],
@@ -740,6 +753,8 @@ pub(super) fn prepare(
     fs: &GameFs,
     shadows: &ShadowIndex<Occluder>,
     model_shadows: &[Option<ShadowIndex<Occluder>>],
+    terrain_shadows: &ShadowIndex<TerrainTriangle>,
+    prop_shadows: &ShadowIndex<super::props::PropTriangle>,
     budget: &mut Budget<'_>,
 ) -> Result<Prepared, String> {
     budget.consume(0)?;
@@ -778,17 +793,22 @@ pub(super) fn prepare(
     if face_sources.len() != faces.len() {
         return Err("Emission face contributors disagree with emitted geometry".into());
     }
-    if declarations.exact_enabled {
-        admit_exact_hulls(
+    let cutouts = if declarations.exact_enabled {
+        Some(admit_exact_providers(
             declarations,
             map,
             scopes,
             fs,
             shadows,
             model_shadows,
+            terrain_shadows,
+            prop_shadows,
+            instances,
             budget,
-        )?;
-    }
+        )?)
+    } else {
+        None
+    };
     let source_side_count = declarations.sides.len();
     let mut allocation = budget.reserve_bytes(
         source_side_count
@@ -877,6 +897,9 @@ pub(super) fn prepare(
                     "Emission source does not retain its exact outward plane identity".into(),
                 );
             }
+            if declarations.exact_enabled && face.primitive_count != 0 {
+                return Err("Exact emission sources require the ordinary native surface fan without primitive overrides".into());
+            }
             if map.brushes[owner].contents & source_formats::bsp::contents::SOLID == 0 {
                 return Err(
                     "Emission source owner is missing from the ordinary solid shadow scope".into(),
@@ -887,13 +910,6 @@ pub(super) fn prepare(
                 normal: local_plane.normal,
                 dist: local_plane.dist,
             });
-            if declarations.exact_enabled
-                && ![DVec3::X, DVec3::Y, DVec3::Z].contains(&plane.normal.abs())
-            {
-                return Err(
-                    "Exact emission visibility requires an axis-aligned emitting face".into(),
-                );
-            }
             let texture = if declaration.textured {
                 Some(
                     declarations
@@ -946,19 +962,28 @@ pub(super) fn prepare(
             {
                 return Err("Emission source needs at least three finite native vertices within Source coordinate bounds".into());
             }
-            if declarations.exact_enabled {
-                for &point in &points {
-                    exact::source_support([point; 3], plane, budget)?;
-                }
-            }
+            let exact_face = if declarations.exact_enabled {
+                let certificate = exact::SourceFace::new(&points, plane, budget)?;
+                Some(Rc::new(certificate))
+            } else {
+                None
+            };
             let mut triangles = Vec::with_capacity(points.len() - 2);
             let mut texture_triangles = Vec::new();
             let mut face_area = 0.0;
             for (corner, pair) in points[1..].windows(2).enumerate() {
                 budget.consume(1)?;
+                if let Some(certificate) = &exact_face
+                    && !certificate.fan_triangle(corner, budget)?
+                {
+                    continue;
+                }
                 let cross = (pair[1] - points[0]).cross(pair[0] - points[0]);
                 let area = cross.length() * 0.5;
                 if area == 0.0 {
+                    if exact_face.is_some() {
+                        return Err("Exact emission source loses positive native triangle area in floating evaluation".into());
+                    }
                     continue;
                 }
                 if !area.is_finite() || cross.dot(plane.normal) <= 0.0 {
@@ -1020,18 +1045,41 @@ pub(super) fn prepare(
             }
             let fragments = if let Some(texture) = texture {
                 stats.textured_source_faces += 1;
-                texture::partition(
-                    texture,
-                    triangles,
-                    &texture_triangles,
-                    &mut texture_work,
-                    budget,
-                    &mut allocation,
-                )?
+                if exact_face
+                    .as_ref()
+                    .is_some_and(|certificate| !certificate.planar())
+                {
+                    partition_native_fan(
+                        texture,
+                        triangles,
+                        &texture_triangles,
+                        plane,
+                        &mut texture_work,
+                        budget,
+                        &mut allocation,
+                    )?
+                } else {
+                    texture::partition(
+                        texture,
+                        triangles,
+                        &texture_triangles,
+                        &mut texture_work,
+                        budget,
+                        &mut allocation,
+                    )?
+                }
             } else {
                 texture_work.triangles(triangles.len())?;
                 BTreeMap::from([([255; 3], triangles)])
             };
+            let generated_partition = texture.is_some_and(|texture| texture.rectangles() != 1);
+            if generated_partition
+                && let Some(certificate) = &exact_face
+                && certificate.planar()
+                && !certificate.supports_retained_plane()
+            {
+                certify_source_partition(certificate, &points, &fragments, budget)?;
+            }
             let location = source_location(instances, map.brushes[owner].id, *id);
             if declaration.textured {
                 allocation.grow(
@@ -1058,8 +1106,19 @@ pub(super) fn prepare(
             };
             for (rgb, triangles) in fragments {
                 if declarations.exact_enabled && texture.is_some() {
-                    for &triangle in &triangles {
-                        exact::source_support(triangle, plane, budget)?;
+                    let certificate = exact_face
+                        .as_ref()
+                        .ok_or("Exact emission source lost its native face certificate")?;
+                    if certificate.planar() {
+                        if certificate.supports_retained_plane() {
+                            for &triangle in &triangles {
+                                exact::source_support(triangle, plane, budget)?;
+                            }
+                        } else if !generated_partition {
+                            for &triangle in &triangles {
+                                certificate.support(triangle, budget)?;
+                            }
+                        }
                     }
                 }
                 let radiance = declaration.channels.map(|value| {
@@ -1101,6 +1160,7 @@ pub(super) fn prepare(
                     world_plane: (scope.entity == 0).then_some(side.plane),
                     triangles,
                     radiance,
+                    exact_face: exact_face.clone(),
                     boundary: SourceBoundary {
                         plane: side.plane,
                         equation: plane,
@@ -1119,6 +1179,7 @@ pub(super) fn prepare(
     budget.consume(0)?;
     Ok(Prepared {
         sources,
+        cutouts,
         stats,
         cells: std::array::from_fn(|_| Cell::new(0)),
         rays: std::array::from_fn(|_| Cell::new(0)),
@@ -1131,16 +1192,101 @@ pub(super) fn prepare(
     })
 }
 
+fn certify_source_partition(
+    certificate: &exact::SourceFace,
+    points: &[DVec3],
+    fragments: &SourceFragments,
+    budget: &mut Budget<'_>,
+) -> Result<(), String> {
+    budget.consume(fragments.len())?;
+    let triangle_count = fragments.values().try_fold(0usize, |count, triangles| {
+        count
+            .checked_add(triangles.len())
+            .filter(|count| *count <= MAX_TRIANGLES)
+            .ok_or("Exact emission partition exceeds 262144 source triangles")
+    })?;
+    certificate.partition(
+        points,
+        fragments.values().flatten().copied(),
+        triangle_count,
+        budget,
+    )
+}
+
+fn partition_native_fan(
+    texture: &texture::Texture,
+    triangles: Vec<[DVec3; 3]>,
+    coordinates: &[[DVec2; 3]],
+    plane: map_core::Plane,
+    counters: &mut texture::Counters,
+    budget: &mut Budget<'_>,
+    allocation: &mut Allocation,
+) -> Result<SourceFragments, String> {
+    if triangles.len() != coordinates.len() {
+        return Err("Texture emission source lost its native texture coordinates".into());
+    }
+    let mut fragments = BTreeMap::new();
+    for (triangle, coordinates) in triangles.into_iter().zip(coordinates) {
+        budget.consume(1)?;
+        let winding = [triangle[0], triangle[2], triangle[1]];
+        let certificate = exact::SourceFace::new(&winding, plane, budget)?;
+        allocation.grow(budget, size_of::<[DVec3; 3]>())?;
+        let partition = texture::partition(
+            texture,
+            vec![triangle],
+            std::slice::from_ref(coordinates),
+            counters,
+            budget,
+            allocation,
+        )?;
+        certify_source_partition(&certificate, &winding, &partition, budget)?;
+        for (rgb, mut pieces) in partition {
+            budget.consume(1)?;
+            match fragments.entry(rgb) {
+                Entry::Vacant(entry) => {
+                    allocation.grow(budget, 256)?;
+                    entry.insert(pieces);
+                }
+                Entry::Occupied(entry) => {
+                    budget.consume(pieces.len())?;
+                    let group = entry.into_mut();
+                    let required = group
+                        .len()
+                        .checked_add(pieces.len())
+                        .filter(|count| *count <= MAX_TRIANGLES)
+                        .ok_or("Exact emission partition exceeds 262144 source triangles")?;
+                    if required > group.capacity() {
+                        let additional_bytes = (required - group.capacity())
+                            .checked_mul(size_of::<[DVec3; 3]>())
+                            .ok_or("Exact emission partition allocation overflow")?;
+                        let _reallocation = budget.reserve::<[DVec3; 3]>(group.capacity())?;
+                        allocation.grow(budget, additional_bytes)?;
+                        group
+                            .try_reserve_exact(required - group.len())
+                            .map_err(|_| "Exact emission partition cannot be allocated")?;
+                    }
+                    group.append(&mut pieces);
+                }
+            }
+        }
+    }
+    Ok(fragments)
+}
+
 #[allow(clippy::too_many_arguments)]
-fn admit_exact_hulls(
+fn admit_exact_providers(
     declarations: &Declarations,
     map: &Map<'_>,
     scopes: &[super::models::Scope],
     fs: &GameFs,
     shadows: &ShadowIndex<Occluder>,
     model_shadows: &[Option<ShadowIndex<Occluder>>],
+    terrain_shadows: &ShadowIndex<TerrainTriangle>,
+    prop_shadows: &ShadowIndex<super::props::PropTriangle>,
+    instances: &crate::instances::Prepared<'_>,
     budget: &mut Budget<'_>,
-) -> Result<(), String> {
+) -> Result<cutout::Cache, String> {
+    let mut cutouts = cutout::Cache::new(budget)?;
     let mut assets = super::props::Assets::for_brushes(fs, &declarations.sources);
     let mut checked = BTreeSet::new();
     let mut checked_allocation = budget.reserve_bytes(0)?;
@@ -1157,15 +1303,21 @@ fn admit_exact_hulls(
                 .get(source.brush)
                 .ok_or("Exact emission hull references a missing original brush")?;
             let result = (|| {
-                if brush.contents & !source_formats::bsp::contents::DETAIL
-                    != source_formats::bsp::contents::SOLID
-                    || hull.sky.iter().any(|sky| *sky)
-                    || hull
-                        .optical
-                        .as_ref()
-                        .is_some_and(|optical| optical.faces.iter().any(Option::is_some))
-                {
-                    return Err("Exact emission visibility requires ordinary opaque original hulls; sky, alpha, grate and translucent hulls are unsupported".into());
+                let alpha = hull
+                    .optical
+                    .as_ref()
+                    .is_some_and(|optical| optical.faces.iter().any(Option::is_some));
+                let contents = brush.contents & !bsp::contents::DETAIL;
+                let ordinary = contents == bsp::contents::SOLID;
+                let cutout = alpha
+                    && contents
+                        & !(bsp::contents::SOLID
+                            | bsp::contents::WINDOW
+                            | bsp::contents::TRANSLUCENT)
+                        == 0
+                    && contents & (bsp::contents::SOLID | bsp::contents::WINDOW) != 0;
+                if (!ordinary && !cutout) || hull.sky.iter().any(|sky| *sky) {
+                    return Err("Exact emission visibility requires ordinary opaque or admitted binary-cutout original hulls; sky and fractional transmission are unsupported".into());
                 }
                 if !(4..=exact::MAX_HULL_PLANES).contains(&hull.planes.len())
                     || source.sides.len() != hull.planes.len()
@@ -1191,7 +1343,9 @@ fn admit_exact_hulls(
                 let mut interior = DVec3::ZERO;
                 let mut vertices = 0usize;
                 let mut originals = brush.sides.iter().filter(|side| !side.bevel);
-                for (identity, plane) in source.sides.iter().zip(&hull.planes) {
+                for (face_index, (identity, plane)) in
+                    source.sides.iter().zip(&hull.planes).enumerate()
+                {
                     budget.consume(1)?;
                     let original = originals
                         .next()
@@ -1223,23 +1377,22 @@ fn admit_exact_hulls(
                     for &point in &winding.0 {
                         interior += point;
                     }
-                    let material = map.materials.get(original.material);
-                    budget.consume(1 + material.name.len().div_ceil(64))?;
-                    if !crate::instances::brush_models::ordinary(material) {
-                        return Err(format!(
-                            "Exact emission visibility requires retained ordinary opaque material {} on every original nonbevel boundary",
-                            material.name
-                        ));
-                    }
-                    if !checked.contains(&original.material) {
-                        checked_allocation.grow(budget, 1024)?;
-                        let _parsed = budget.reserve_bytes(
-                            crate::MAX_BRUSH_SHADOW_MATERIAL_BYTES
-                                * 128
-                                * (source_formats::vmt::MAX_PATCH_DEPTH + 1),
+                    if let Some(face) = hull
+                        .optical
+                        .as_ref()
+                        .and_then(|optical| optical.faces.get(face_index))
+                        .and_then(Option::as_ref)
+                    {
+                        cutouts.admit(face.exact_mapping().0, budget)?;
+                    } else {
+                        admit_exact_material(
+                            original.material,
+                            map,
+                            &mut assets,
+                            &mut checked,
+                            &mut checked_allocation,
+                            budget,
                         )?;
-                        assets.brush_opaque_material(&material.name, budget)?;
-                        checked.insert(original.material);
                     }
                 }
                 if originals.next().is_some() || vertices == 0 {
@@ -1247,18 +1400,144 @@ fn admit_exact_hulls(
                         "Exact emission hull lost its complete original face geometry".into(),
                     );
                 }
-                exact::closed_hull(
+                let bounds = exact::closed_hull(
                     &hull.planes,
                     scope.pose.point(interior / vertices as f64),
                     budget,
                 )?;
+                if alpha {
+                    cutouts.admit_hull(hull, bounds, budget)?;
+                }
                 Ok::<(), String>(())
             })();
             result
                 .map_err(|error| format!("Exact material emission solid:{}: {error}", brush.id))?;
         }
     }
-    budget.consume(0)
+    let mut triangles = terrain_shadows.objects().iter().enumerate();
+    for (patch, terrain) in map.terrains.iter().enumerate() {
+        budget.consume(1)?;
+        let result = (|| {
+            let alpha = triangles
+                .clone()
+                .next()
+                .and_then(|(_, provider)| provider.exact_alpha())
+                .is_some();
+            if !alpha && terrain.info.contents & !bsp::contents::DETAIL != bsp::contents::SOLID {
+                return Err(
+                    "Exact emission visibility requires ordinary opaque terrain contents".into(),
+                );
+            }
+            if !alpha {
+                admit_exact_material(
+                    terrain.material,
+                    map,
+                    &mut assets,
+                    &mut checked,
+                    &mut checked_allocation,
+                    budget,
+                )?;
+            }
+            for triangle in 0..terrain.indices.len() {
+                budget.consume(4)?;
+                let (slot, provider) = triangles
+                    .next()
+                    .ok_or("Exact emission terrain lost an original native triangle")?;
+                if provider.source() != (patch, triangle) || provider.event_slot() != slot {
+                    return Err(
+                        "Exact emission terrain lost its original patch or triangle identity"
+                            .into(),
+                    );
+                }
+                if let Some(face) = provider.exact_alpha() {
+                    cutouts.admit(face.exact_mapping().0, budget)?;
+                }
+                exact::admit_triangle(provider.positions(), budget)?;
+                let (mins, maxs) = provider.bounds();
+                if !mins.is_finite()
+                    || !maxs.is_finite()
+                    || !mins.cmple(maxs).all()
+                    || provider.positions().iter().any(|point| {
+                        !point.is_finite() || !mins.cmple(*point).all() || !point.cmple(maxs).all()
+                    })
+                {
+                    return Err(
+                        "Exact emission terrain bounds do not enclose its actual native triangle"
+                            .into(),
+                    );
+                }
+            }
+            Ok::<(), String>(())
+        })();
+        result.map_err(|error| {
+            format!(
+                "Exact material emission {}: {error}",
+                source_location(instances, terrain.solid, terrain.side)
+            )
+        })?;
+    }
+    if triangles.next().is_some() {
+        return Err("Exact emission terrain index has no original native triangle identity".into());
+    }
+    for provider in prop_shadows.objects() {
+        budget.consume(4)?;
+        let points = provider.exact_positions()?;
+        if let Some((material, _)) = provider.exact_alpha() {
+            cutouts.admit(material, budget)?;
+        }
+        exact::admit_triangle(points, budget).map_err(|message| {
+            let primitive = provider.primitive();
+            format!(
+                "Exact emission native prop ordinal:{} triangle:{}: {message}",
+                primitive.owner, primitive.triangle
+            )
+        })?;
+        let (mins, maxs) = provider.bounds();
+        if !mins.is_finite()
+            || !maxs.is_finite()
+            || !mins.cmple(maxs).all()
+            || points.iter().any(|point| {
+                !point.is_finite() || !mins.cmple(*point).all() || !point.cmple(maxs).all()
+            })
+        {
+            let primitive = provider.primitive();
+            return Err(format!(
+                "Exact emission static-prop {} triangle {} bounds do not enclose its actual mesh geometry",
+                primitive.owner, primitive.triangle
+            ));
+        }
+    }
+    budget.consume(0)?;
+    Ok(cutouts)
+}
+
+fn admit_exact_material(
+    index: usize,
+    map: &Map<'_>,
+    assets: &mut super::props::Assets<'_, '_>,
+    checked: &mut BTreeSet<usize>,
+    allocation: &mut Allocation,
+    budget: &mut Budget<'_>,
+) -> Result<(), String> {
+    let material = map.materials.get(index);
+    budget.consume(1 + material.name.len().div_ceil(64))?;
+    if !crate::instances::brush_models::ordinary(material) {
+        return Err(format!(
+            "Exact emission visibility requires retained ordinary opaque material {} on every original boundary and terrain patch",
+            material.name
+        ));
+    }
+    if !checked.contains(&index) {
+        allocation.grow(budget, 1024)?;
+        let _parsed = budget.reserve_bytes(
+            crate::MAX_BRUSH_SHADOW_MATERIAL_BYTES
+                * 128
+                * (source_formats::vmt::MAX_PATCH_DEPTH + 1),
+        )?;
+        assets.brush_opaque_material(&material.name, budget)?;
+        checked.insert(index);
+    }
+    Ok(())
 }
 
 fn unit(value: DVec3) -> Result<DVec3, String> {
@@ -1503,21 +1782,6 @@ impl Prepared {
                 budget.consume(1 + hull.planes.len())?;
             }
         }
-        if !context.terrain.objects().is_empty() {
-            budget.consume(1)?;
-            return Err(
-                "Exact emission visibility does not support terrain shadow providers".into(),
-            );
-        }
-        for triangle in context.props.objects() {
-            budget.consume(1)?;
-            if !triangle.owned_by(context.skip_owner) {
-                return Err(
-                    "Exact emission visibility does not support static-prop shadow providers"
-                        .into(),
-                );
-            }
-        }
         let mut total = DVec3::ZERO;
         let mut conversion_error = 0.0;
         let mut visited = 0usize;
@@ -1527,18 +1791,105 @@ impl Prepared {
                 continue;
             }
             let result = (|| {
-                if exact::front(sample.point, source.boundary.equation, budget)?
-                    != Ordering::Greater
+                let certificate = source
+                    .exact_face
+                    .as_ref()
+                    .ok_or("Exact emission source lost its native face certificate")?;
+                if certificate.planar()
+                    && certificate.front(sample.point, budget)? != Ordering::Greater
                 {
                     return Ok(0.0);
                 }
                 let mut integral = 0.0;
                 for &triangle in &source.triangles {
+                    if !certificate.planar()
+                        && exact::triangle_front(triangle, sample.point, budget)?
+                            != Ordering::Greater
+                    {
+                        continue;
+                    }
                     let mut visibility = exact::Visibility::new(triangle, sample.origin, budget)?;
                     for index in std::iter::once(context.shadows).chain(context.model) {
                         for hull in index.objects() {
                             budget.consume(1)?;
-                            visibility.subtract(&hull.planes, budget)?;
+                            visibility.subtract_hull(
+                                hull,
+                                self.cutouts
+                                    .as_ref()
+                                    .ok_or("Exact emission lost its admitted masks")?,
+                                budget,
+                            )?;
+                        }
+                    }
+                    budget.consume(triangle.len() + 1)?;
+                    let (mins, maxs) = triangle
+                        .iter()
+                        .fold((sample.origin, sample.origin), |(mins, maxs), &point| {
+                            (mins.min(point), maxs.max(point))
+                        });
+                    {
+                        let work = RefCell::new(&mut *budget);
+                        let enumeration = context.terrain.visit_bounds(
+                            mins,
+                            maxs,
+                            &mut |amount| work.borrow_mut().consume(amount),
+                            &mut |_, provider| {
+                                visibility.subtract_terrain(
+                                    provider,
+                                    self.cutouts
+                                        .as_ref()
+                                        .ok_or("Exact emission lost its masks")?,
+                                    &mut work.borrow_mut(),
+                                )?;
+                                Ok(ControlFlow::Continue(()))
+                            },
+                        )?;
+                        if enumeration.is_break() {
+                            return Err(
+                                "Exact emission terrain enumeration did not complete".into()
+                            );
+                        }
+                        let enumeration = context.props.visit_bounds(
+                            mins,
+                            maxs,
+                            &mut |amount| work.borrow_mut().consume(amount),
+                            &mut |_, provider| {
+                                work.borrow_mut().consume(1)?;
+                                if !provider.owned_by(context.skip_owner) {
+                                    let result = if let Some((material, coordinates)) =
+                                        provider.exact_alpha()
+                                    {
+                                        visibility.subtract_masked_triangle(
+                                            provider.exact_positions()?,
+                                            coordinates,
+                                            material,
+                                            self.cutouts
+                                                .as_ref()
+                                                .ok_or("Exact emission lost its masks")?
+                                                .get(material)?,
+                                            &mut work.borrow_mut(),
+                                        )
+                                    } else {
+                                        visibility.subtract_triangle(
+                                            provider.exact_positions()?,
+                                            &mut work.borrow_mut(),
+                                        )
+                                    };
+                                    let primitive = provider.primitive();
+                                    result.map_err(|error| {
+                                        format!(
+                                            "Exact emission prop ordinal:{} triangle:{}: {error}",
+                                            primitive.owner, primitive.triangle
+                                        )
+                                    })?;
+                                }
+                                Ok(ControlFlow::Continue(()))
+                            },
+                        )?;
+                        if enumeration.is_break() {
+                            return Err(
+                                "Exact emission static-prop enumeration did not complete".into()
+                            );
                         }
                     }
                     let fragments = visibility.finish(sample.point, budget)?;

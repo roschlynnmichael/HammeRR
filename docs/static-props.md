@@ -18,6 +18,31 @@ Use **Not Solid**, **Use Bounding Box** or **Use VPhysics** under **Collisions**
 VPhysics needs compatible model collision data from a matching `.phy` file.
 The **Physics bodies** setting controls compiled brush and terrain bodies separately.
 
+## Cast exact emission shadows
+
+Use supported opaque or binary-cutout prop triangles to block [material emission](material-emission.md#exact-brush-shadows).
+
+1. Leave **Disable Shadows** disabled on the prop.
+2. Open **World settings…** and set **Emission file**.
+3. Enable **Exact emission visibility**, then click **Apply properties**.
+4. Compile with **Direct LDR** or **Direct LDR + HDR**.
+5. Open **Build details…**. Check **Emission visibility policy** and **Diagnostics**.
+
+Shadows use actual triangles from body 0 and LOD 0 with the selected **Skin**
+and compiled pose, including supported referenced props. Materials require plain
+opaque **VertexLitGeneric** or supported **Patch** chains. Supported static
+binary-cutout **VertexLitGeneric** and **UnlitGeneric** materials also qualify,
+including their checked transforms and alpha reference. Their original model
+must request texture shadows with `$casttextureshadows`; exact mode reports an
+error if that prerequisite is absent. It never turns settings or model flags on.
+The actual masked mesh silhouette casts the shadow. Exact mode checks the
+original model and material inputs. Missing or unsupported materials,
+fractional/colored transmission and zero-area triangles stop the build. The previous BSP stays intact.
+
+**Disable Shadows** removes that prop's shadow geometry. Disabling receiver self
+shadows omits only that receiving prop's own triangles. Other props, world and
+terrain still block light. Static props cannot emit intrinsic material light.
+
 ## Pack static prop assets
 
 1. Enable **Pack static prop assets** in **Build settings…**.
@@ -112,7 +137,7 @@ Inspect **Instance contents…** before building. Child source files must remain
 - Leaf membership uses conservative rotated header bounds, not exact model hulls.
 - Packing does not change vertex lighting or shadow settings.
 - Packed chains must end at `VertexLitGeneric` with one canonical `$basetexture`. Opaque terminals can add valid `$reflectivity`; strict cutouts can add only `$alphatest 1`.
-- Other terminal parameters, authored alpha references and proxies remain unsupported.
+- Other packing terminal parameters, authored alpha references for packing and proxies remain unsupported.
 - Cutout vertex-lighting receivers require one canonical basetexture and literal `$alphatest 1` at the default cutoff, with the same bounded Patch grammar as packing.
 - Cutout vertex lighting is experimental.
 - Missing or unsupported required data fails rather than substituting another asset.

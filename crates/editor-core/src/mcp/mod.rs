@@ -93,6 +93,10 @@ Keep brush coordinates inside +-16384. set_spatial_settings configures the share
 Objects are addressed as 'solid:<id>' (world brushes) and 'entity:<id>' (point or brush \
 entities; a brush entity owns its brushes). Tools that take ids default to the current \
 selection when ids are omitted, and creation tools select what they create.\n\
+Use set_object_selection_mode for groups/objects/solids picking, area, volume and paint. \
+For entity children, inspect get_objects on the entity, select_solids with numeric brush IDs, \
+then omit ids for move/transform/duplicate/delete; explicit object-edit ids remain root-only. \
+get_objects can inspect a child solid:<id> directly and reports its owner.\n\
 Materials are paths under materials/ without extension, e.g. 'tools/toolsnodraw', \
 'tools/toolsskybox', 'dev/dev_measuregeneric01'; find more with search_materials. \
 Sprite Name fields are model-resource references: a material choice must be authored \
@@ -150,7 +154,7 @@ get_entity_references also inspects FGD property links, parent references and in
 Use begin_entity_rename, update_entity_rename, commit_entity_rename or cancel_entity_rename \
 for safe naming: exact links update atomically, shared names require rename_group, and \
 unchanged ambiguous references require accept_review after inspecting the preview. \
-get_property_inspector reports world or common entity fields, stored/default values and mixed flags. World Exact emission visibility (_hammerr_emission_exact_visibility) is an intrinsic default-off exactly 0/1 policy requiring a nonblank valid Emission file. It requests bounded exact rational finite-source shadow subtraction for uniquely owned world/detail or eligible stationary Shadows Yes func_brush emitting faces at root or assembled-child scope, with a final axis-aligned plane and zero native-plane support residual and all applicable original opaque brush hulls certified closed, bounded and convex from their final planes, including oblique planes. Moving, parented or unrequested brush-model emitting sources remain unsupported. Unsupported providers, uncertain support, unqualified fragment conversion/conditioning and exhausted bounds reject without sampled fallback or BSP publication. Fullbright validates without exact geometry admission. Edit either emission policy and the file through the shared property draft; disabling both policies and clearing the file may occur in any order in one atomic draft. Native direct emission retains its point approximation. World Native direct emission (_hammerr_emission_native_direct) is an intrinsic default-off exact 0/1 policy beside Emission file, not a build option or recipe field. Enable it through the same property draft only with a nonblank valid Emission file; file/policy edits validate together atomically. It adds per-constant-RGB integration-triangle centroid point approximations for native selected/folded runtime direct lighting and replaces only intrinsic direct emission in indexed probes. Baked maps/VHV/detail direct and reflected ambient remain; the exact visibility policy selects emission shadow handling. Native slot/angular/folding approximations and inherited static-cache additions on dynamic-lit full-VHV props prevent universal appearance parity. Fullbright validates without emitting records; static previews do not simulate native selection. Inspect actual per-channel native_surface_lights and native_policy under stats.material_emission. \
+get_property_inspector reports world or common entity fields, stored/default values and mixed flags. World Exact emission visibility (_hammerr_emission_exact_visibility) is an intrinsic default-off exactly 0/1 policy requiring a nonblank valid Emission file. It requests bounded exact rational finite-source shadow subtraction for uniquely owned world/detail or eligible stationary Shadows Yes func_brush emitting faces at root or assembled-child scope. Exact sources use a certified ordinary native outward triangle fan with a simple convex projection, without primitive overrides or displacement. Planar and nonplanar faces are admitted only within that fan certificate. Each nondegenerate original native triangle uses its actual plane for facing, support, clipping and the finite-area kernel; all source coordinates are retained. Nonzero-residual planar texture partitions keep their exact original-face coverage proof. Nonplanar textures require exact subcoverage of each original native fan triangle before RGB groups merge. The native fan must cover the actual surface once. Each subcoverage must cover its original native triangle once, with exact target-plane support, positive outward area, target containment, pairwise disjoint interiors and exact total projected area across all RGB groups, including black, with no floating coverage allowance. Existing planar, sampled and native point approximation paths are unchanged. Colour selection retains nearest mip0 RGB and binary64 UV semantics; the coverage proof does not certify real-arithmetic UV boundaries or native filtering parity. The retained plane keeps original custody and native direct-emission semantics; every applicable owning hull still blocks light to other receivers, including real source self-occlusion. The whole emitting BSP face is excluded from its own emission; fan triangles do not exchange that face's light, and receiver grids stay unchanged, including retained-plane sampling for brush receivers. It uses all applicable original opaque or supported binary-cutout brush hulls certified closed, bounded and convex from their final planes, including oblique planes, plus actual two-sided opaque or supported binary-cutout native terrain and static-prop mesh triangles. Cutouts use the retained static alpha sampler, transform, nearest mip0 classification and clamp/repeat. Brush masks require Brush texture shadows; prop masks require the original MDL CAST_TEXTURE_SHADOWS flag. No prerequisite is enabled automatically. Exact hull events use strict segment endpoints and maximum coverage at exactly coincident boundary faces; sampled near-tie tolerance bands remain separate. Fragment conversion must certify binary64 kernel vertices exactly on each actual source triangle plane and all converted coverage inside the exact visible region. Terrain and prop emitting sources, moving, parented or unrequested brush-model emitting sources, and fractional/colored transmission or unqualified prop shadow providers remain unsupported. Unsupported providers, uncertain support, unqualified fragment conversion/conditioning and exhausted bounds reject without sampled fallback or BSP publication. Fullbright validates without exact geometry admission. Edit either emission policy and the file through the shared property draft; disabling both policies and clearing the file may occur in any order in one atomic draft. Native direct emission retains its point approximation. World Native direct emission (_hammerr_emission_native_direct) is an intrinsic default-off exact 0/1 policy beside Emission file, not a build option or recipe field. Enable it through the same property draft only with a nonblank valid Emission file; file/policy edits validate together atomically. It adds per-constant-RGB integration-triangle centroid point approximations for native selected/folded runtime direct lighting and replaces only intrinsic direct emission in indexed probes. Baked maps/VHV/detail direct and reflected ambient remain; the exact visibility policy selects emission shadow handling. Native slot/angular/folding approximations and inherited static-cache additions on dynamic-lit full-VHV props prevent universal appearance parity. Fullbright validates without emitting records; static previews do not simulate native selection. Inspect actual per-channel native_surface_lights and native_policy under stats.material_emission. \
 Use begin_property_edit (world:true or entity ids), update_property_edit with a changes list, \
 then commit_property_edit or cancel_property_edit using the returned token. Default resets \
 write the FGD value; remove deletes the override. All targets apply in one undo step. \
@@ -211,7 +215,11 @@ fn ids_or_selection(session: &Session, ids: Option<&[String]>) -> Result<Vec<Obj
         Some([]) => {
             return Err("explicit ids must not be empty; omit ids to use the selection".into());
         }
-        Some(ids) => parse_ids(ids)?,
+        Some(ids) => {
+            let ids = parse_ids(ids)?;
+            session.require_root_objects(&ids)?;
+            ids
+        }
         None => session.selected_ids(),
     };
     if ids.is_empty() {
@@ -253,8 +261,11 @@ fn summary(doc: &Document, id: ObjectId) -> Value {
     let bounds = bounds_json(query::bounds(doc, id));
     match id {
         ObjectId::Solid(n) => {
-            let materials = doc.solid(n).map(|s| materials_of([s])).unwrap_or_default();
-            json!({ "id": id_string(id), "kind": "solid", "bounds": bounds, "materials": materials })
+            let resolved = map_core::subobject::solid(doc, n).ok();
+            let materials = resolved
+                .map(|(_, solid)| materials_of([solid]))
+                .unwrap_or_default();
+            json!({ "id": id_string(id), "kind": "solid", "owner":resolved.map(|(owner,_)|id_string(owner)), "bounds": bounds, "materials": materials })
         }
         ObjectId::Entity(n) => {
             let Some(e) = doc.entity(n) else {
@@ -327,7 +338,11 @@ fn entity_detail(entity: &Entity) -> Value {
 fn detail(doc: &Document, id: ObjectId) -> Result<Value, String> {
     let mut value = summary(doc, id);
     let extra = match id {
-        ObjectId::Solid(n) => solid_detail(doc.solid(n).ok_or(format!("{id} does not exist"))?),
+        ObjectId::Solid(n) => solid_detail(
+            map_core::subobject::solid(doc, n)
+                .map_err(|error| error.to_string())?
+                .1,
+        ),
         ObjectId::Entity(n) => entity_detail(doc.entity(n).ok_or(format!("{id} does not exist"))?),
     };
     if let (Value::Object(base), Value::Object(extra)) = (&mut value, extra) {
@@ -532,7 +547,7 @@ fn single_entity(session: &Session, id: Option<&str>) -> Result<u32, String> {
     };
     match id {
         ObjectId::Entity(n) => Ok(n),
-        ObjectId::Solid(_) => Err(format!("{} is a world brush, not an entity", id_string(id))),
+        ObjectId::Solid(_) => Err(format!("{} is a brush, not an entity", id_string(id))),
     }
 }
 
@@ -729,6 +744,7 @@ impl EditorServer {
             + Self::context_tools()
             + Self::cubemap_bindings_tools()
             + Self::entities_tools()
+            + Self::entity_gallery_tools()
             + Self::entity_placement_tools()
             + Self::files_tools()
             + Self::geometry_tools()

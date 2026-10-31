@@ -764,7 +764,7 @@ impl Session {
         };
         settings["lighting_work_limit"] = self.compilation.options.lighting_work_limit.into();
         settings["light_value_bindings"] = instance_reference::light_value_binding_scope();
-        settings["material_emission_description"] = "World settings → Emission file (_hammerr_emission_file) selects an optional mounted relative declaration file. File contents and source assets validate at compile time. Records are [ldr:|hdr:] material R G B brightness; add texture: before the material to multiply radiance by nearest mip0 base-texture RGB with the 2.2 conversion and stored UV clamp/repeat. One mode per material; unsupported or changed textures reject. Sources are drawn opaque world/detail faces or eligible stationary func_brush models with Shadows Yes, using their compiled initial pose. Moving, unrequested and MDL emitting models are unavailable. By default, finite-area sources use sampled baked lighting and dynamic receivers use indexed ambient only. Exact emission visibility (_hammerr_emission_exact_visibility) is a separate default-off World 0/1 policy requiring a nonblank Emission file. It requests bounded exact rational finite-source shadow subtraction for uniquely owned world/detail or eligible stationary Shadows Yes func_brush emitting faces at root or assembled-child scope, with a final axis-aligned plane and zero native-plane support residual and all applicable original opaque brush hulls certified closed, bounded and convex from their final planes, including oblique planes. Moving, parented or unrequested brush-model emitting sources remain unsupported. Unsupported providers, uncertain source support, unqualified fragment conversion/conditioning and exhausted bounds reject without sampled fallback or BSP publication. Native direct emission (_hammerr_emission_native_direct) is a default-off World 0/1 policy requiring a nonblank Emission file. It adds native selected/folded runtime direct point approximations at constant-RGB integration-triangle centroids and removes only intrinsic direct emission from indexed ambient; baked maps, VHV, detail direct and reflected ambient remain, with emission visibility selected independently. Native light slots and angular/folding behavior do not reproduce finite-area response. The inherited full-VHV native path can add static-cache lighting when dynamic lights affect the prop. Native direct emission implies no shader glow or exact finite-source runtime response. Turn off both emission policies before clearing Emission file, or change them in one draft. Default-off paired emission keeps the existing authored HDR WorldLight requirement. Fullbright validates without baking or native emission records.".into();
+        settings["material_emission_description"] = "World settings → Emission file (_hammerr_emission_file) selects an optional mounted relative declaration file. File contents and source assets validate at compile time. Records are [ldr:|hdr:] material R G B brightness; add texture: before the material to multiply radiance by nearest mip0 base-texture RGB with the 2.2 conversion and stored UV clamp/repeat. One mode per material; unsupported or changed textures reject. Sources are drawn opaque world/detail faces or eligible stationary func_brush models with Shadows Yes, using their compiled initial pose. Moving, unrequested and MDL emitting models are unavailable. By default, finite-area sources use sampled baked lighting and dynamic receivers use indexed ambient only. Exact emission visibility (_hammerr_emission_exact_visibility) is a separate default-off World 0/1 policy requiring a nonblank Emission file. It requests bounded exact rational finite-source shadow subtraction for uniquely owned world/detail or eligible stationary Shadows Yes func_brush emitting faces at root or assembled-child scope. Exact sources use a certified ordinary native outward triangle fan with a simple convex projection, without primitive overrides or displacement. Planar and nonplanar faces are admitted only within that fan certificate. Each nondegenerate original native triangle uses its actual plane for facing, support, clipping and the finite-area kernel; all source coordinates are retained. Nonzero-residual planar texture partitions keep their exact original-face coverage proof. Nonplanar textures require exact subcoverage of each original native fan triangle before RGB groups merge. The native fan must cover the actual surface once. Each subcoverage must cover its original native triangle once, with exact target-plane support, positive outward area, target containment, pairwise disjoint interiors and exact total projected area across all RGB groups, including black, with no floating coverage allowance. Existing planar, sampled and native point approximation paths are unchanged. Colour selection retains nearest mip0 RGB and binary64 UV semantics; the coverage proof does not certify real-arithmetic UV boundaries or native filtering parity. The retained plane keeps original custody and native direct-emission semantics; every applicable owning hull still blocks light to other receivers, including real source self-occlusion. The whole emitting BSP face is excluded from its own emission; fan triangles do not exchange that face's light, and receiver grids stay unchanged, including retained-plane sampling for brush receivers. It uses all applicable original opaque or supported binary-cutout brush hulls certified closed, bounded and convex from their final planes, including oblique planes, plus actual two-sided opaque or supported binary-cutout native terrain and static-prop mesh triangles. Cutouts use the retained static alpha sampler, transform, nearest mip0 classification and clamp/repeat. Brush masks require Brush texture shadows; prop masks require the original MDL CAST_TEXTURE_SHADOWS flag. No prerequisite is enabled automatically. Exact hull events use strict segment endpoints and maximum coverage at exactly coincident boundary faces; sampled near-tie tolerance bands remain separate. Fragment conversion must certify binary64 kernel vertices exactly on each actual source triangle plane and all converted coverage inside the exact visible region. Terrain and prop emitting sources, moving, parented or unrequested brush-model emitting sources, and fractional/colored transmission or unqualified prop shadow providers remain unsupported. Unsupported providers, uncertain source support, unqualified fragment conversion/conditioning and exhausted bounds reject without sampled fallback or BSP publication. Native direct emission (_hammerr_emission_native_direct) is a default-off World 0/1 policy requiring a nonblank Emission file. It adds native selected/folded runtime direct point approximations at constant-RGB integration-triangle centroids and removes only intrinsic direct emission from indexed ambient; baked maps, VHV, detail direct and reflected ambient remain, with emission visibility selected independently. Native light slots and angular/folding behavior do not reproduce finite-area response. The inherited full-VHV native path can add static-cache lighting when dynamic lights affect the prop. Native direct emission implies no shader glow or exact finite-source runtime response. Turn off both emission policies before clearing Emission file, or change them in one draft. Default-off paired emission keeps the existing authored HDR WorldLight requirement. Fullbright validates without baking or native emission records.".into();
         let native_emission =
             compiler::material_emission_native_direct(&self.document.vmf().world.properties);
         settings["material_emission_native_direct"] = json!({
@@ -800,11 +800,61 @@ impl Session {
             "error":exact_emission.as_ref().err(),
             "requires":"nonblank_valid_emission_file",
             "fullbright":"validate_only_without_exact_geometry_admission",
-            "source_scope":"uniquely_owned_world_detail_or_stationary_shadows_yes_func_brush_root_and_assembled_children_final_axis_aligned_actual_source_vertices_with_zero_native_plane_support_residual",
-            "occluder_scope":"all_applicable_original_opaque_brush_hulls_with_certified_closed_bounded_convex_final_planes_including_oblique_planes",
+            "source_scope":"uniquely_owned_world_detail_or_stationary_shadows_yes_func_brush_root_and_assembled_children_certified_ordinary_native_outward_triangle_fans_with_simple_convex_projection_including_planar_and_nonplanar_faces",
+            "source_support_certificate":{
+                "scope":"all_exact_source_faces",
+                "outward_reference":"retained_posed_source_plane",
+                "native_topology":"ordinary_surface_fan_from_first_native_corner_without_primitive_overrides_or_displacement",
+                "source_geometry":"all_original_native_coordinates_preserved",
+                "requires":["unique_projected_corners","simple_convex_projection","nonzero_area","positive_projected_area_for_each_nondegenerate_native_triangle","outward_orientation_relative_to_retained_plane","exact_native_fan_coverage"],
+                "facing":"each_original_native_triangle_plane",
+                "support_and_kernel":"each_actual_source_triangle_plane",
+                "retained_posed_plane":"original_side_hull_custody_and_native_direct_approximation",
+                "owning_hulls":"all_applicable_original_hulls_active_for_real_self_occlusion",
+                "nonzero_residual_scope":"uniform_radiance_or_textures_with_required_native_face_or_triangle_coverage",
+                "nonplanar_texture_scope":"exact_subcoverage_per_original_native_fan_triangle_before_rgb_group_merge",
+                "zero_residual_texture_scope":"unchanged"
+            },
+            "texture_partition_certificate":{
+                "scope":"generated_planar_texture_partitions_at_nonzero_residual_or_nonplanar_texture_sources",
+                "coverage_target":"original_planar_face_or_each_original_native_fan_triangle_for_nonplanar_sources",
+                "nonplanar_proof_order":"native_fan_coverage_and_per_original_triangle_subcoverage_before_rgb_group_merge",
+                "requires":["exact_coverage_target_plane_support","positive_outward_area","coverage_target_containment","pairwise_disjoint_interiors","exact_total_projected_area"],
+                "rgb_groups":"all_including_black_before_radiance_shortcuts",
+                "shared_boundaries":"edges_and_vertices_allowed",
+                "floating_coverage_allowance":"none",
+                "geometry":"actual_generated_binary64_triangles",
+                "colour_selection":"existing_nearest_mip0_RGB_and_binary64_UV_semantics",
+                "real_arithmetic_uv_boundary_or_native_filter_parity":false
+            },
+            "receiver_policy":{
+                "own_emitting_face":"excluded_as_whole_bsp_face",
+                "intra_face_facet_exchange":false,
+                "receiver_grids":"unchanged",
+                "brush_receiver_sampling":"retained_plane"
+            },
+            "occluder_scope":"all_applicable_original_opaque_or_binary_cutout_certified_closed_convex_brush_hulls_and_actual_two_sided_native_terrain_and_static_prop_triangles",
+            "prop_shadow_materials":"strict_opaque_VertexLitGeneric_or_static_binary_cutout_VertexLitGeneric_UnlitGeneric_and_supported_Patch_chains",
+            "cutout_shadow_contract":{
+                "sampler":"retained_original_alpha_owner_nearest_mip0_alpha_over_255_at_or_above_reference",
+                "geometry":"exact_affine_uv_texel_regions_on_original_provider_planes_with_certified_final_hull_bounds",
+                "texture_transform_and_clamp_repeat":true,
+                "half_open_texels":true,
+                "brush_and_terrain_requires":"brush_texture_shadows",
+                "props_require":"original_mdl_CAST_TEXTURE_SHADOWS",
+                "automatic_prerequisites":false,
+                "hull_boundaries":"actual_entry_exit_with_maximum_at_exactly_coincident_faces_and_strict_endpoints",
+                "sampled_near_tie_tolerance_bands":false,
+                "fractional_or_colored_transmission":false,
+                "collision_holes":false
+            },
+            "prop_shadow_geometry":"actual_body0_lod0_selected_skin_final_pose_triangles",
             "topology":"bounded_exact_rational_open_segment_shadow_subtraction",
+            "fragment_conversion":"certified_binary64_kernel_vertices_on_each_actual_source_triangle_plane_and_converted_coverage_inside_exact_visible_regions",
+            "fragment_conversion_candidates":"existing_projected_candidates_then_for_oblique_triangles_bounded_common_absolute_dyadic_world_grid_candidates_then_bounded_dyadic_native_triangle_weights_with_exact_three_coordinate_binary64_roundtrips",
+            "fragment_conversion_bound_policy":"accepted_coarse_bounds_unchanged_refine_only_over_limit_accumulated_triangle_bound_with_outward_actual_source_area_jacobian_and_source_incidence_cosine_uppers",
             "failure_policy":"reject_without_sampled_fallback_or_bsp_publication",
-            "unsupported":["non_axis_aligned_emitting_faces","moving_parented_or_unrequested_brush_model_emitting_sources","nonzero_native_plane_support_residual","terrain_providers","prop_providers","sky_alpha_or_unknown_materials","uncertified_closed_convex_hulls","uncertain_source_support","unqualified_fragment_conversion_or_conditioning","exhausted_work_storage_or_arithmetic_bounds"],
+            "unsupported":["unrepresentable_on_plane_binary64_kernel_fragment_vertices","moving_parented_or_unrequested_brush_model_emitting_sources","uncertified_native_source_fans_or_projections","source_primitive_overrides_or_displacement","nonzero_planar_residual_generated_texture_partitions_without_exact_face_coverage","nonplanar_texture_sources_without_per_original_native_triangle_exact_coverage","terrain_emitting_sources","prop_emitting_sources","unqualified_prop_materials_or_collapsed_primitives","sky_fractional_colored_or_unknown_materials","uncertified_closed_convex_hulls","uncertain_source_support","unqualified_fragment_conversion_or_conditioning","exhausted_work_storage_or_arithmetic_bounds"],
             "default_visibility":"sampled_segments",
             "native_direct":"independent_centroid_point_approximation_unchanged"
         });
@@ -1168,6 +1218,7 @@ impl Session {
     ) -> Result<CompileRequest, String> {
         self.ensure_partitions_resolved()?;
         self.ensure_entity_placement_resolved()?;
+        self.ensure_entity_gallery_resolved()?;
         if self.closing {
             return Err("the editor is closing".into());
         }

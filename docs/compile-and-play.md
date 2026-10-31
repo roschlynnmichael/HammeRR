@@ -59,8 +59,9 @@ they can refer to an older map state. Finish or cancel active viewport gestures
 before framing.
 
 Only the latest finished job's first 100 diagnostics are retained. You can frame
-lighting receiver errors, missing-probe cell references, entity inside-solid
-warnings, and point/spot source diagnostics with valid world origins. Invalid or absent
+lighting receiver errors, including material-emission failures, missing-probe
+cell references, entity inside-solid warnings, and point/spot source diagnostics
+with valid world origins. Invalid or absent
 origins, unclassified positions and model-local positions remain unavailable.
 This action does not select or resolve an authored object.
 
@@ -143,8 +144,19 @@ Use [material emission](material-emission.md) to bake light from supported
 world/detail surfaces through **World settings… → Emission file**.
 The default-off [**Exact emission visibility**](material-emission.md#exact-brush-shadows)
 World control supports uniquely owned world/detail and eligible stationary
-**Shadows → Yes** `func_brush` emitters with final axis-aligned faces. Shadow
-casters use certified closed convex opaque brush hulls, including oblique hulls.
+**Shadows → Yes** `func_brush` emitters with certified ordinary native outward
+fans and a simple convex projection. Eligible fans can be planar or nonplanar.
+Each native triangle uses its actual plane. Nonplanar textures require exact
+coverage per original fan triangle before colour groups combine, including black.
+Texture colour selection keeps nearest mip0 RGB and binary64 UV semantics.
+The whole emitting BSP face excludes its own emission; receiver grids stay
+unchanged. Other receivers retain all owning-hull shadows. Converted binary64
+kernel vertices must stay on each actual source triangle plane, with all
+converted coverage inside the exact visible region.
+Shadow casters use certified closed convex opaque or binary-cutout brush hulls,
+including oblique hulls, and actual opaque or binary-cutout terrain and admitted
+static-prop triangles. Uncertified fans or projections, primitive overrides, displacement
+sources and failed required texture coverage remain unsupported.
 Unsupported sources, geometry or numeric bounds stop the build.
 The default-off **Native direct emission** World control adds a separately
 described runtime centroid approximation; static previews remain static.

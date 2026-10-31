@@ -69,8 +69,8 @@ not the complete shader. Use one mode per material across LDR and HDR records.
 4. Set **Pitch Yaw Roll (Y Z X)** for an initial rotation, if needed.
 5. Apply a declared emission material to its source faces, then compile.
 
-For **Exact emission visibility**, the final emitting face must be axis-aligned
-and every source vertex must lie exactly on its native plane.
+For **Exact emission visibility**, the compiler must certify the native outward
+triangle fan, each triangle's actual plane and the required texture coverage.
 The source uses its compiled initial pose. Other solids in the same model
 still block light. Supported child models use their assembled pose once.
 See [stationary shadow sources](brush-texture-shadows.md#cast-from-a-stationary-root-brush-model)
@@ -97,7 +97,8 @@ the sampled finite-area bake.
 8. Click **Frame light** to frame that triangle's native centroid. Selection stays unchanged.
 
 The policy defaults off. Each constant-colour integration triangle supplies a
-point at its actual centroid, using its normal and area-scaled intensity.
+point at its actual centroid, using the retained posed source-plane normal and
+area-scaled intensity.
 Texture-driven sources retain their constant-colour integration pieces.
 Several records can therefore refer to one authored face. Source associations
 describe the successful build; stale builds or missing metadata cannot select
@@ -121,48 +122,128 @@ existing indexed-ambient policy. **Fullbright** validates the configuration but
 does not emit native surface-light records. Child declarations cannot activate
 the policy.
 
-## Exact brush shadows
+<a id="exact-brush-shadows"></a>
 
-Resolve brush shadows across the source area instead of sampling segments.
+## Exact brush, terrain and prop shadows
+
+Resolve opaque and binary-cutout brush, terrain and static prop shadows across the source area.
 
 1. Open **World settings…** and set **Emission file**.
 2. Enable **Exact emission visibility**, then click **Apply properties**.
 3. Compile with **Direct LDR** or **Direct LDR + HDR**.
 4. Open **Build details…**. **Emission visibility policy** should read
-   **Exact opaque convex hulls**. Check **Emission conversion bounds (dimensionless)**.
+   **Exact opaque and cutout hulls and mesh triangles**. Check
+   **Emission conversion bounds (dimensionless)**.
 
 Exact mode supports uniquely owned world/detail and eligible stationary
 **Shadows → Yes** `func_brush` emitting faces, at root or in supported assemblies.
-The final emitting plane must be axis-aligned, with every source vertex exactly
-on its native plane. Opaque brush casters may have oblique planes when their
-final hull is certified closed, bounded and convex. Every applicable original
-hull participates, including invisible boundaries. Eligible stationary brush
-models retain their existing global or same-model shadow scope.
+The source must use an ordinary native outward triangle fan with a simple
+convex projection. Eligible faces can be planar or nonplanar; this does not
+admit arbitrary warped polygons. Primitive overrides and displacement sources
+are unsupported. Each nondegenerate native triangle uses its actual plane for
+facing, support, clipping and the finite-area kernel. All original source
+coordinates stay unchanged. The retained brush plane keeps the original side
+and hull identity and the normal used by native direct emission.
+Every owning hull still blocks light, so real self-occlusion can darken a source.
+
+The whole emitting BSP face excludes its own emission. Its fan triangles do not
+light one another. Receiver grids stay unchanged; brush receivers keep their
+retained-plane sampling.
+
+Planar texture partitions at nonzero residual keep their exact face-coverage
+proof. Nonplanar textures must prove exact coverage of each original native fan
+triangle before colour groups combine. The fan and its pieces must cover the
+actual surface once, including black groups, without gaps, interior overlaps or
+a floating coverage allowance. Shared edges and vertices are allowed.
+
+The proof checks the generated geometry. Colour selection still uses nearest
+mip0 RGB and binary64 UV calculations. Exact real-arithmetic UV boundaries and
+native filtering parity are not certified. The zero-residual texture path is
+unchanged.
+
+Converted binary64 kernel vertices must stay exactly on each actual source
+triangle plane. All converted coverage must stay inside the exact visible region.
+The compiler rejects faces that cannot meet these checks.
+Opaque brush casters may have oblique planes when their final hull is certified
+closed, bounded and convex. Every applicable original hull participates,
+including invisible boundaries.
+Eligible stationary brush models retain their existing global or same-model
+shadow scope.
+
+Terrain with a supported opaque or binary-cutout material casts from its actual
+native triangles. Opaque materials require **LightmappedGeneric**,
+**UnlitGeneric**, or a supported **Patch** chain. Cutouts require the supported
+static **LightmappedGeneric** form and **Brush texture shadows**.
+Terrain blend shaders are unsupported. Masked regions affect light transport;
+they do not create physical holes. Collision settings do not disable shadows.
+
+Eligible static props cast from actual triangles in body 0 and LOD 0, with
+the selected skin at the compiled pose. Opaque materials require plain
+**VertexLitGeneric** or supported **Patch** chains. Binary cutouts use supported
+static **VertexLitGeneric** or **UnlitGeneric** materials and Patch chains;
+the original model must request texture shadows with `$casttextureshadows`.
+Supported referenced props use their assembled pose. See [prop shadow controls](static-props.md#cast-exact-emission-shadows).
+
+To use cutout brush or terrain casters:
+
+1. Apply a supported static alpha-test material described in [Brush texture shadows](brush-texture-shadows.md).
+2. Open **Build settings…** and enable **Brush texture shadows**.
+3. Keep **Exact emission visibility** enabled in **World settings…**, then compile.
+
+The compiler borrows the original loaded alpha texture and cutoff. Masks use
+nearest mip0 texels, the checked material transform and VTF clamp/repeat flags.
+It resolves texel regions on the actual provider plane with half-open texel
+ownership, including constant and rank-deficient UVs. No clipped caster geometry
+is rounded to a substitute mesh. Settings are never enabled automatically.
+Brush cutouts keep their full original hull: entry and exit events contribute,
+exactly coincident boundary faces use maximum coverage, and only strict segment
+interior events block. Mask enumeration uses certified bounds derived from the
+final hull halfspaces. Ordinary sampled tracing keeps its separate near-tie
+bands. Eligible brush models keep their global or same-model scope.
+Fractional and colored transmission, animation and general shader effects remain
+unsupported in exact mode; disable **Exact emission visibility** to use supported
+sampled fractional or colored shadows.
+
+Terrain and prop triangles block from both sides, including their edges.
+Only contacts between the shadow segment endpoints block light. Exact mode
+checks the original model and material inputs before gathering light.
+
 Unsupported casters, source support or numeric bounds stop the build.
 The previous BSP stays intact. The compiler does not switch to sampled shadows.
 Receivers beside a panel use its finite hull; crossing the panel's extended
 plane alone does not stop the build.
 For larger bakes, open **Build settings…**, increase **Lighting work limit
 (millions)**, then click **Apply work limit**. Numeric and memory limits still apply.
+Exact mode also limits each source triangle to 32 million work units.
+Increasing the build work limit does not raise this fixed limit.
 
-Clipping uses exact rational arithmetic. Conversion to the floating lighting
-kernel has a reported bound of at most `1e-9` per receiver, before source colour
-and brightness. This is not an RGB, BSP quantization or native image error bound.
+Clipping uses exact rational arithmetic. Exact mode removes redundant cuts
+between visible regions when their exact union is convex. Shadow boundaries stay
+fixed. Conversion uses bounded on-plane candidates. Narrow openings and complex
+cuts can still exceed numeric limits.
+Conversion to the floating lighting kernel includes the source surface-area
+scale and, when needed, certified actual source-area Jacobian and source-incidence
+cosine upper bounds.
+Its reported bound is at most `1e-12` per source triangle and `1e-9` per
+receiver, before source colour and brightness. This is not an RGB, BSP
+quantization or native image error bound.
 **Native direct emission** keeps its separate point approximation.
 Disable **Exact emission visibility** to use the original sampled bake.
 
-Exact mode rejects oblique final emitting faces, nonzero native-plane support
-residuals, moving/parented/unrequested brush-model emitting sources,
-sky/alpha/unknown materials, terrain and prop shadow providers, and uncertified
-hulls. Checked arithmetic, fragment and conditioning limits also apply.
+Exact mode rejects uncertified native fans or projections, primitive overrides,
+displacement sources, failed required texture coverage, unrepresentable
+on-plane fragment vertices, moving/parented/unrequested brush-model emitting
+sources, sky/unknown materials, fractional or colored transmission, unsupported prop models, zero-area mesh
+triangles and uncertified hulls. Checked arithmetic, fragment and conditioning
+limits also apply.
 **Fullbright** checks the setting and declarations without exact shadow admission.
 
 ## Limits
 
-- Sources: drawn opaque flat world, `func_detail` or eligible **Shadows → Yes**
-  `func_brush` faces. Moving, unrequested and MDL models, terrain, liquid,
-  transparent and merged sources with multiple original contributors are
-  unavailable. Sources are checked before compile-region filtering.
+- Sources: drawn opaque brush faces from world, `func_detail` or eligible
+  **Shadows → Yes** `func_brush` models. Moving, unrequested and MDL models,
+  terrain, liquid, transparent and merged sources with multiple original
+  contributors are unavailable. Sources are checked before compile-region filtering.
 - Existing supported baked receivers and diffuse bounces receive emission.
   Dynamic models use indexed ambient by default; **Native direct emission** opts
   into the separately described runtime approximation. No shader glow is added.

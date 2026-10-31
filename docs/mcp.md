@@ -52,6 +52,17 @@ Use `--game <gameinfo.txt>` and `--fgd <file.fgd>` for other content.
 The standalone server uses stdio. It does not open a window or HTTP endpoint.
 A render request starts graphics when needed.
 
+## Saved colors
+
+1. Call `get_color_palette` with `source:"user"` (the default) or `source:"map"`.
+2. Supply that report's `snapshot` and the same `source` to `set_color_palette`.
+3. Use `action:"save"` with a new `name` and `color:{"space":"rgb1","channels":[0.1,0.2,0.3]}`. `replace` requires an existing name and color; `rename` requires an existing name and an unused `new_name`; `delete` requires an existing name. Names and colors use the same limits as the [color picker](entities.md#colors).
+4. Use `action:"use"` to retrieve `{color,palette}` without changing a map or draft. Apply the returned normalized color separately with `set_entity_color_space` or the property draft operations.
+
+Map writes are independent undoable metadata edits. `save_map` persists them in the VMF; `undo`/`redo` restores them, and new/replaced documents use their own palette. If a property draft exists, map writes require its current `property_token`. That matching draft keeps its token and pending edits while its revision advances. Missing, stale or replaced tokens refuse without changes. Other drafts and active geometry/viewport gestures also refuse map writes. User palette actions do not accept `property_token` and retain existing immediate shared-preference persistence and external-source checks.
+
+`action:"reload"` refreshes user storage or current map metadata; it accepts no name, color, new name or property token. `use` also forbids a property token. Invalid map metadata reports `ready:false`, `entries:null` and an explicit `error`; it is preserved and blocks Use/writes. Cancelling a color/property draft does not undo explicit palette edits. Neither source stores brightness.
+
 ## Start a task
 
 1. Call `list_documents` to identify the target map.
@@ -66,9 +77,45 @@ A render request starts graphics when needed.
 Object tools use the selection when `ids` is omitted. An explicit `ids: []`
 rejects. Use `select` with `ids: []` to clear the selection.
 
+Use `get_object_selection_mode` and `set_object_selection_mode` with
+`mode:"groups"`, `"objects"` or `"solids"` for the shared click, overlap, area,
+volume and paint rules. Type filters still classify each seed by its owning type.
+`set_selection_mode` independently switches Objects/Faces.
+
+For an exact brush selection, call `select_solids` with numeric `solids` and
+optional `mode:"replace"`, `"add"`, `"remove"` or `"toggle"`. Entity reports from
+`get_objects` list child solid IDs; selected brush reports include `owner` and
+bounds. `get_objects` can also inspect a child directly as `solid:<n>`.
+`frame_selection`, move, transform, material editing, duplicate and delete use
+the shared selected brush IDs when `ids` is omitted and preserve owning entities through Undo.
+Child duplicates stay in their original entity. Root-only operations such as
+Copy/Cut, repeat, surface placement, instance extraction and editor hiding reject
+child IDs before replacing drafts or writing. Existing `select` still accepts
+world-brush/entity root IDs and expands groups only in **Groups** mode.
+Explicit object-edit `ids` retain their root-only contract; use `select_solids`
+then omit `ids` to edit selected children.
+For a spatial child-brush query, choose Solids and call `select_volume` with
+`preview:true`; `get_volume_selection` pages the exact brush IDs without changing
+the selection. Resolve those IDs through `get_objects` for owners and bounds.
+
 `render_view.preview_issues` identifies omitted brushes and invalid terrain.
 Each issue includes `brush`, optional `face`, and `message`.
 At most 64 details are returned; `preview_issues_omitted` counts the rest.
+
+## Point-entity gallery
+
+Use `browse_entity_gallery` to page through all loaded FGD point classes, including
+unavailable entries and their reasons. `preview_entity_gallery` takes the current
+snapshot, 1–32 explicit class/property examples, an origin and optional columns/gap.
+Actual helper/model/icon examples appear in the shared `render_view` scene without
+changing source contents or history. `get_entity_gallery` reports each example's
+properties, bounds and missing/unsupported visual diagnostics.
+
+Use `frame_entity_gallery` for the complete arrangement or one example. Review
+before calling `apply_entity_gallery`, which creates the entire owned batch in
+one Undo step. `cancel_entity_gallery` discards it; `review_entity_gallery` takes
+ownership with a replacement token. Save/compile/play refuse pending galleries.
+See [Point-entity gallery](entity-gallery.md) for arrangement and resource limits.
 
 ## Compare an external VMF
 
@@ -252,7 +299,10 @@ Nonzero padding returns `padding` and `usable_rectangle`; `uv_bounds` describes 
 The default `mode:"per_face"` fits each face independently.
 Set `mode:"together"` and `reference:{solid,side}` to fit same-facing coplanar faces continuously using that selected face's projection frame.
 Together drafts additionally return `mode` and `reference`; their `uv_bounds` describes the combined usable target, including gaps between faces.
-Together requires a reference from the targets. Per-face mode rejects a reference parameter.
+Together requires a reference from the targets. Other modes reject a reference parameter.
+Set `mode:"pack"` with `packing:{"scale":1,"padding":2}` for automatic face-island packing.
+Scale multiplies current texel spans while preserving aspect, skew and mirroring.
+Island padding and outer region padding use source-image pixels; the preview reports each allocation and actual UV bounds.
 The outer rectangle must fit the actual image, and padding must leave positive width and height.
 Invalid updates preserve the current draft. Apply or cancel with its exact token through `commit_face_preview` or `cancel_face_preview`.
 
@@ -346,12 +396,12 @@ entities and unsupported metadata refuse the whole batch.
 ## Selection defaults
 
 Selection defaults use `get_selection_defaults` and `set_selection_defaults`.
-Save records current filters; Apply affects only the selected document. Reload and Reset do not apply filters.
+Save records the current object-selection mode and type filters; Apply affects only the selected document. Reload and Reset do not apply rules. Reset saves Groups with all types enabled.
 
 Use `get_selection_profiles` to list named profiles and their stable IDs.
-Call `set_selection_profile` with the latest snapshot and `operation:{action:"save",name:"Props"}` to save current filters.
+Call `set_selection_profile` with the latest snapshot and `operation:{action:"save",name:"Props"}` to save the current mode and filters.
 Use a profile ID for `replace`, `apply`, `rename` or `delete`; `rename` also needs `name`.
-Only `apply` changes current filters. Profile edits leave startup defaults unchanged; default Save/Reset retain profiles.
+Only `apply` changes current rules. Profile edits leave startup defaults unchanged; default Save/Reset retain profiles. Version 1/2 files remain readable with Groups mode; explicit saves publish version 3 through the same authority and conflict guards.
 
 ## Pivot grid snapping
 
@@ -418,8 +468,9 @@ The result gives `recorded_position`, `captured_snapshot` and `framed_bounds`.
 
 Only the latest finished job's first 100 rows can be framed. Coordinates can
 belong to an older map state; this does not resolve a current authored object.
-Lighting receiver errors, missing-probe cell references, entity inside-solid
-warnings and point/spot source diagnostics with valid world origins are certified.
+Lighting receiver errors, including material-emission failures, missing-probe
+cell references, entity inside-solid warnings and point/spot source diagnostics
+with valid world origins are certified.
 Unclassified, model-local, invalid or absent positions remain unavailable. Active viewport
 gestures block framing. Map edits, selection, history and other drafts stay intact.
 Channel-independent unreachable/unsupported-light warnings appear once in the
@@ -759,27 +810,104 @@ The default-off [**Exact emission visibility**](material-emission.md#exact-brush
 World policy uses the same draft: set `_hammerr_emission_exact_visibility` to
 `"1"` alongside the file, then commit. It is not a compile option or recipe
 field. `get_compile_settings.material_emission_exact_visibility` reports the
-effective value or validation error, source and hull scope, and refusal policy.
+effective value or validation error, source and shadow scope, and refusal policy.
 It supports uniquely owned world/detail or eligible stationary Shadows Yes
-`func_brush` emitting faces, at root or assembled-child scope, with a final
-axis-aligned plane and zero native-plane support residual. Every applicable
-opaque brush hull must be certified closed, bounded and convex from its final
-planes, including oblique casters. Original materials and existing global/model
-shadow scopes still apply. Oblique final emitting faces, nonzero native-plane
-support residuals, moving/parented/unrequested brush-model emitting sources,
-sky/alpha/unknown materials, terrain/prop shadow providers, uncertified hulls and
-exhausted numeric/resource bounds reject without sampled fallback or replacement
-of the previous BSP. Fullbright validates the policy, file and declarations
-without admitting exact geometry.
+`func_brush` emitting faces, at root or assembled-child scope. Sources use the
+ordinary native fan anchored at the first native surface corner, without
+primitive overrides or displacement. Its projection must be simple and convex,
+with unique projected corners. Each nondegenerate original native triangle must
+have positive projected area and point outward relative to the retained brush
+plane. These checks admit eligible planar and nonplanar fans, not arbitrary
+nonplanar polygons. Each triangle uses its actual plane for facing, support,
+clipping and the finite-area kernel. All original coordinates remain intact.
+The retained posed brush plane keeps
+original side/hull custody and native direct-emission semantics;
+all applicable owning hulls still block light, including real self-occlusion.
+
+Planar nonzero-residual texture partitions keep their exact face-coverage proof.
+For nonplanar textures, exact subcoverage is proved separately against each
+original native fan triangle before RGB groups merge. The parent fan covers the
+surface once; each subcoverage must cover its original native triangle once.
+Each generated binary64
+triangle must have exact support on its coverage target's plane, positive outward
+area, target containment, pairwise disjoint interiors and total projected area
+exactly equal to that target.
+Shared edges and vertices are allowed. The proof includes every RGB group,
+including black, before radiance shortcuts. No floating coverage allowance is
+accepted. `texture_partition_certificate` reports this scope and its requirements.
+The planar zero-residual texture path is unchanged.
+
+`receiver_policy` reports the existing whole-emitting-BSP-face exclusion: its fan
+triangles do not exchange that face's emission. Receiver grids stay unchanged;
+brush receivers keep retained-plane sampling. Other receivers retain all original
+owning-hull shadows.
+
+Colour selection keeps nearest mip0 RGB and binary64 UV semantics. The coverage
+proof does not certify real-arithmetic UV boundaries or native filtering parity.
+`source_support_certificate` reports face requirements and scopes.
+Converted binary64 kernel vertices must lie exactly on each actual source
+triangle plane. All converted coverage must stay inside the exact visible region;
+`fragment_conversion` reports this contract.
+`fragment_conversion_candidates` reports the projected search first. If it cannot
+certify an oblique source triangle's conversion, bounded common absolute dyadic
+world-grid candidates are tried before bounded dyadic native-triangle weights.
+The world grid applies only to converted fragments. Native weights map exactly
+through the original source triangle. Every accepted candidate must lie exactly
+on the actual source triangle plane, with all three coordinates exactly
+representable in binary64.
+Existing containment, orientation, area-loss, conditioning and error guards still
+decide acceptance. Source coordinates stay unchanged; complex cuts can still fail.
+Arithmetic and resource errors stop the build.
+`fragment_conversion_bound_policy` permits refinement only when the accumulated
+coarse triangle bound exceeds its limit. Certified actual source-area Jacobian
+and source-incidence cosine upper bounds refine the whole accumulated bound.
+The Jacobian replaces the coarse L1 surface scale. The cosine uses the unbiased
+kernel point and a distance lower bound over the whole original source triangle.
+Accepted coarse bounds and error caps stay unchanged.
+Every applicable opaque or binary-cutout brush hull must be certified closed, bounded and convex
+from its final planes, including oblique casters. Original materials and
+existing global/model shadow scopes still apply.
+
+Terrain and eligible static props cast from their actual two-sided triangles,
+including edges. Props use body 0, LOD 0, selected skin and the compiled
+pose, including supported assembled placements. Opaque prop materials require
+plain `VertexLitGeneric` or supported `Patch` chains. Binary masks also admit
+the current static `VertexLitGeneric`/`UnlitGeneric` alpha sampler and supported
+Patch chains, with checked transform, cutoff and nearest-mip0 clamp/repeat.
+The original MDL `CAST_TEXTURE_SHADOWS` flag is required. Brush and terrain
+cutouts require `brush_texture_shadows:true` through `set_compile_settings`;
+no prerequisite is enabled automatically. Exact mode checks original model and
+material inputs before gathering light.
+
+`cutout_shadow_contract` reports the binary-mask scope. Masks are exact affine
+UV regions on original provider planes, including half-open constant/rank-deficient
+texel ownership. Brush masks retain actual hull entry/exit events, maximum at
+exactly coincident boundary faces and strict endpoints. Sampled near-tie bands
+remain separate. Terrain masks do not change collision.
+
+Only contacts between the shadow segment endpoints block light. Collision
+settings do not disable terrain shadows. A prop's `disableshadows:1` removes
+its shadow geometry. Receiver `disableselfshadowing:1` omits only that prop's
+own triangles; other providers still block light. Terrain and MDL emission
+sources remain unavailable.
+
+Uncertified native fans or projections, primitive overrides, displacement
+sources, failed required texture coverage, unrepresentable on-plane fragment vertices,
+moving/parented/unrequested brush-model emitting sources, sky, fractional/colored transmission, unknown or
+missing materials, unsupported prop models, zero-area mesh triangles,
+uncertified hulls and exhausted numeric/resource bounds reject without sampled
+fallback or replacement of the previous BSP. Fullbright validates the policy,
+file and declarations without admitting exact geometry.
 
 Under `stats.material_emission`, `visibility_policy` identifies the selected
 policy. `maximum_visibility_conversion_error` is the maximum bound per receiver;
 `total_visibility_conversion_error` sums bounds across all gathers in both
 channels. These dimensionless bounds cover conversion from exact clipped
-fragments to the floating kernel, limited to `1e-12` per source triangle and
-`1e-9` per receiver before source RGB/brightness and BSP quantization. They are
-not RGB or image error bounds. **Build details…** shows **Emission visibility
-policy** and **Emission conversion bounds (dimensionless)**.
+fragments to the floating kernel, including source surface-area scale, limited
+to `1e-12` per source triangle and `1e-9` per receiver before source
+RGB/brightness and BSP quantization. They are not RGB or image error bounds.
+**Build details…** shows **Emission visibility policy** and
+**Emission conversion bounds (dimensionless)**.
 
 Use `[ldr:|hdr:] texture: material R G B brightness` for nearest mip0
 base-RGB emission. The same file and property operations apply. Results include
@@ -832,7 +960,7 @@ These groups locate the available operations.
 | [Surface placement](placement.md) | `apply_repeat_array`, `cancel_repeat_array`, `get_repeat_array`, `preview_repeat_array` |
 | [Preview defaults](preview-defaults.md) | `get_preview_defaults`, `set_preview_defaults` |
 | [Recovery](map-tools.md) | `create_recovery_snapshot`, `delete_recovery_snapshot`, `get_recovery`, `reload_recovery_settings`, `restore_recovery_snapshot`, `set_recovery_settings` |
-| [Selection](selection.md) | `begin_paint_selection`, `begin_transform_drag`, `cancel_area_selection`, `cancel_paint_selection`, `cancel_transform_preview`, `cancel_volume_selection`, `commit_area_selection`, `commit_paint_selection`, `commit_transform_preview`, `commit_volume_selection`, `delete_objects`, `duplicate_objects`, `frame_selection`, `frame_volume_selection`, `get_area_selection`, `get_paint_selection`, `get_selection`, `get_selection_defaults`, `get_selection_filters`, `get_selection_profiles`, `get_transform_handles`, `get_volume_selection`, `move_objects`, `preview_snap_to_grid`, `select`, `select_area`, `select_volume`, `set_area_selection_options`, `set_paint_tool`, `set_selection_defaults`, `set_selection_filters`, `set_selection_profile`, `set_selection_mode`, `set_transform_tool`, `transform_objects`, `update_paint_selection`, `update_transform_drag` |
+| [Selection](selection.md) | `begin_paint_selection`, `begin_transform_drag`, `cancel_area_selection`, `cancel_paint_selection`, `cancel_transform_preview`, `cancel_volume_selection`, `commit_area_selection`, `commit_paint_selection`, `commit_transform_preview`, `commit_volume_selection`, `delete_objects`, `duplicate_objects`, `frame_selection`, `frame_volume_selection`, `get_area_selection`, `get_object_selection_mode`, `get_paint_selection`, `get_selection`, `get_selection_defaults`, `get_selection_filters`, `get_selection_profiles`, `get_transform_handles`, `get_volume_selection`, `move_objects`, `preview_snap_to_grid`, `select`, `select_area`, `select_solids`, `select_volume`, `set_area_selection_options`, `set_object_selection_mode`, `set_paint_tool`, `set_selection_defaults`, `set_selection_filters`, `set_selection_profile`, `set_selection_mode`, `set_transform_tool`, `transform_objects`, `update_paint_selection`, `update_transform_drag` |
 | [Keyboard shortcuts](keyboard-shortcuts.md) | `execute_editor_command`, `find_editor_commands`, `get_keyboard_shortcuts`, `set_keyboard_shortcuts` |
 | [3D sky preview](sky.md) | `get_3d_sky_preview`, `set_3d_sky_preview` |
 | [Color correction](color-correction.md) | `get_color_correction_preview`, `load_color_correction_lut`, `set_color_correction_preview`, `clear_color_correction_lut` |
