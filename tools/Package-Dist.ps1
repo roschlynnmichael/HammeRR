@@ -30,3 +30,4 @@ $ProgressPreference = 'SilentlyContinue'
 Compress-Archive -Path "$DistDir\*" -DestinationPath $ZipPath -Force
 
 Write-Host "Packaging complete!" -ForegroundColor Green
+

@@ -151,9 +151,11 @@ pub fn resolve_environment(environment: &CaptureEnvironment) -> io::Result<Captu
 pub fn validate_environment(environment: &CaptureEnvironment) -> io::Result<()> {
     let root = environment.engine_root.canonicalize()?;
     let has_cstrike = root.join("cstrike_win64.exe").is_file()
+        || root.join("cstrike.exe").is_file()
         || root.join("hl2.exe").is_file()
         || root.join("cstrike_linux64").is_file();
-    if !has_cstrike || !root.join("cstrike/gameinfo.txt").is_file() {
+    let has_gameinfo = root.join("cstrike").join("gameinfo.txt").is_file() || root.join("cstrike/gameinfo.txt").is_file();
+    if !has_cstrike || !has_gameinfo {
         return Err(invalid(
             "Configured native engine root is not a valid CS:S installation",
         ));

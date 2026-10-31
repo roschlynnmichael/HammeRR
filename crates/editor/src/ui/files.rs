@@ -108,6 +108,17 @@ fn complete_file_action(
     let result = continuation
         .upgrade()
         .and_then(|access| access.with_session(operation));
+    if let Err(ref error) = result {
+        eprintln!("HammeRR file operation failed: {error}");
+        let dialog = rfd::AsyncMessageDialog::new()
+            .set_title("HammeRR - Map Error")
+            .set_description(error)
+            .set_buttons(rfd::MessageButtons::Ok);
+        slint::spawn_local(async move {
+            dialog.show().await;
+        })
+        .expect("event loop is running");
+    }
     report(&app, result);
 }
 

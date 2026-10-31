@@ -24,10 +24,12 @@ fn checked_engine(path: &Path) -> Result<PathBuf, String> {
         .canonicalize()
         .map_err(|e| format!("{}: {e}", path.display()))?;
         let has_css = root.join("cstrike_win64.exe").is_file()
+        || root.join("cstrike.exe").is_file()
         || root.join("hl2.exe").is_file()
         || root.join("cstrike_linux64").is_file();
-    if !has_css || !root.join("cstrike/gameinfo.txt").is_file() {
-        return Err("Native engine root must be the selected Linux CS:S installation".into());
+    let has_gameinfo = root.join("cstrike").join("gameinfo.txt").is_file() || root.join("cstrike/gameinfo.txt").is_file();
+    if !has_css || !has_gameinfo {
+        return Err("Native engine root must be the selected CS:S installation".into());
     }
     Ok(root)
 }

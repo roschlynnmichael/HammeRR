@@ -9,3 +9,4 @@ echo Launching automated update and rebuild process...
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0Update-And-Rebuild.ps1"
 echo.
 pause
+

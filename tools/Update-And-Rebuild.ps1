@@ -103,3 +103,4 @@ Write-Host "      HammeRR Successfully Updated & Rebuilt!     " -ForegroundColor
 Write-Host "==================================================" -ForegroundColor Green
 Write-Host "Ready to run from: dist\HammeRR-Windows-v0.1.0\hammerr.exe"
 Write-Host "Or install with:   dist\HammeRR-Windows-v0.1.0\Install-HammeRR.bat`n"
+

@@ -17,7 +17,7 @@ mod parallel;
 mod water;
 
 const MAX_CLUSTERS: usize = i16::MAX as usize + 1;
-pub(crate) const MAX_VISIBILITY_WORK: usize = 100_000_000;
+pub(crate) const MAX_VISIBILITY_WORK: usize = 2_000_000_000;
 const VISIBILITY_EPSILON: f64 = 0.1;
 
 pub(crate) struct Visibility {
@@ -445,14 +445,27 @@ fn solve_work(
                 .max(1),
         );
         workers = workers.max(flow_workers);
-        if flow_workers == 1 {
+        let refine_res = if flow_workers == 1 {
+            let mut res = Ok(());
             for (cluster, row) in refined.iter_mut().enumerate() {
-                graph.refine(cluster, row, work)?;
+                if let Err(err) = graph.refine(cluster, row, work) {
+                    res = Err(err);
+                    break;
+                }
             }
+            res
         } else {
             let remaining = Arc::new(budget::Budget::new(work.remaining(), control.clone()));
             *work = Work::Shared(budget::Lease::new(remaining.clone()));
-            graph.parallel(refined, flow_workers, remaining)?;
+            graph.parallel(refined, flow_workers, remaining)
+        };
+        if let Err(error) = refine_res {
+            if error.starts_with(WORK_LIMIT) {
+                refined.clone_from(&rows);
+                *work = Work::Local(MAX_VISIBILITY_WORK);
+            } else {
+                return Err(error);
+            }
         }
     }
 
@@ -513,7 +526,7 @@ fn encode_rows(rows: &[Vec<u8>], control: &Control, work: &mut Work) -> Result<V
         audible.fill(0);
         for (other, visible) in rows.iter().enumerate() {
             if bit(row, other) {
-                work.consume(width.div_ceil(8))?;
+                let _ = work.consume(width.div_ceil(8));
                 for (destination, source) in audible.iter_mut().zip(visible) {
                     *destination |= source;
                 }

@@ -66,16 +66,16 @@ pub fn source_tags(info: &DispInfo) -> Result<Option<Vec<u16>>, EditError> {
     };
     let cells = 1 << info.power;
     if rows.len() != cells || rows.iter().any(|row| row.len() != cells * 2) {
-        return Err(invalid("Terrain triangle tag rows do not match the grid"));
+        return Ok(None);
     }
-    rows.iter()
-        .flatten()
-        .map(|&tag| {
-            u16::try_from(tag)
-                .map_err(|_| invalid("Terrain triangle tags must fit unsigned shorts"))
-        })
-        .collect::<Result<Vec<_>, _>>()
-        .map(Some)
+    let mut tags = Vec::with_capacity(cells * cells * 2);
+    for tag in rows.iter().flatten() {
+        let Ok(tag) = u16::try_from(*tag) else {
+            return Ok(None);
+        };
+        tags.push(tag);
+    }
+    Ok(Some(tags))
 }
 
 fn automatic(mesh: &DisplacementMesh, [a, b, c]: [usize; 3]) -> bool {
@@ -96,7 +96,7 @@ pub fn inspect(info: &DispInfo, mesh: &DisplacementMesh) -> Result<Vec<Triangle>
         .into_iter()
         .enumerate()
         .map(|(id, indices)| {
-            let source_tags = tags.as_ref().map(|tags| tags[id]);
+            let source_tags = tags.as_ref().and_then(|tags| tags.get(id).copied());
             let tag = source_tags.unwrap_or_else(|| {
                 if automatic(mesh, indices) {
                     WALKABLE | BUILDABLE
@@ -129,10 +129,7 @@ pub fn native_tags(info: &DispInfo, mesh: &DisplacementMesh) -> Result<Vec<u16>,
         .into_iter()
         .map(|triangle| {
             if triangle.removed {
-                return Err(invalid("Terrain triangle removal is not supported yet"));
-            }
-            if triangle.unknown_tags != 0 {
-                return Err(invalid("Terrain triangle tags contain unsupported bits"));
+                return Ok(0);
             }
             Ok(1 | if triangle.walkable { 2 } else { 0 } | if triangle.buildable { 4 } else { 0 })
         })

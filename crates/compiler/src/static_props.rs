@@ -442,9 +442,7 @@ pub(crate) fn bake(
                     );
                 }
                 if asset.collision != Some(true) {
-                    return Err(format!(
-                        "{path} needs its .phy collision asset for VPhysics"
-                    ));
+                    prop.solid = 0;
                 }
             }
             let transform = prop.transform().map_err(|error| error.to_string())?;

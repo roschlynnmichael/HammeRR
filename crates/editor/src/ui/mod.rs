@@ -71,6 +71,7 @@ struct Ui {
     seen_log: u64,
     game_log_window: Option<GameLogWindow>,
     last_log_refresh: Instant,
+    last_compile_refresh: Instant,
     entity_window: Option<EntityWindow>,
     entity_gallery: Option<entity_gallery_ui::Controller>,
     entity_graph: Option<entity_graph_ui::Form>,
@@ -200,6 +201,7 @@ impl Ui {
             seen_log: 0,
             game_log_window: None,
             last_log_refresh: Instant::now(),
+            last_compile_refresh: Instant::now(),
             entity_window: None,
             entity_gallery: None,
             entity_graph: None,
@@ -3490,15 +3492,25 @@ fn create_document_window(
                     {
                         controller.refresh_playback(&mut lock(&ui.session));
                     }
+                    let compiling = lock(&ui.session).compiling();
+                    let interval = if compiling {
+                        Duration::from_millis(100)
+                    } else {
+                        Duration::from_millis(1000)
+                    };
                     if let Some(controller) = &ui.compile_status
                         && controller.is_visible()
+                        && now.duration_since(ui.last_compile_refresh) >= interval
                     {
+                        ui.last_compile_refresh = now;
                         controller.set_aspect(
                             app.get_viewport_width() / app.get_viewport_height().max(1.0),
                         );
                         controller.refresh_visible(&lock(&ui.session));
                     }
-                    if let Some(window) = &ui.game_log_window {
+                    if let Some(window) = &ui.game_log_window
+                        && now.duration_since(ui.last_log_refresh) >= Duration::from_millis(500)
+                    {
                         let text = lock(&ui.session)
                             .game_log(game::DEFAULT_LOG_LINES)
                             .map(|log| log.text())

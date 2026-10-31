@@ -390,12 +390,14 @@ impl Observation {
                 if metadata.file_type().is_symlink() && read {
                     return Err(io::Error::other("File destination cannot be a symlink"));
                 }
-                let file = Arc::new(if read {
-                    File::open(&path)?
-                } else if metadata.is_dir() {
+                use std::os::windows::fs::OpenOptionsExt;
+                let file = Arc::new(if metadata.is_dir() {
                     open_dir_windows(&path)?
                 } else {
-                    File::open(&path)?
+                    fs::OpenOptions::new()
+                        .read(true)
+                        .share_mode(7)
+                        .open(&path)?
                 });
                 let stamp = EntryStamp::capture_with_file(&file.metadata()?, &file);
                 Ok(Some(Self { file, stamp }))
@@ -589,10 +591,22 @@ impl BoundDestination {
                 }
                 bytes.extend_from_slice(&buffer[..count]);
             }
-            if EntryStamp::capture(&reader.file.metadata()?) != existing.stamp
+            #[cfg(unix)]
+            let reader_stamp = EntryStamp::capture(&reader.file.metadata()?);
+            #[cfg(windows)]
+            let reader_stamp = EntryStamp::capture_with_file(&reader.file.metadata()?, &reader.file);
+            #[cfg(not(any(unix, windows)))]
+            let reader_stamp = EntryStamp::capture(&reader.file.metadata()?);
+
+            if reader_stamp != existing.stamp
                 || bytes.len() as u64 != existing.stamp.length
             {
-                return Err(io::Error::other("File destination changed while reading"));
+                return Err(io::Error::other(format!(
+                    "File destination changed while reading: reader={reader_stamp:?}, existing={:?}, bytes={}, expected={}",
+                    existing.stamp,
+                    bytes.len(),
+                    existing.stamp.length
+                )));
             }
         }
         #[cfg(not(any(unix, windows)))]
@@ -872,15 +886,23 @@ impl StagedFile {
     ) -> io::Result<CommittedReceipt> {
         self.sync_all()?;
         self.destination.verify()?;
-        let file = Arc::new(self.file().try_clone()?);
-        let stamp = EntryStamp::capture_with_file(&file.metadata()?, &file);
-        let destination = self.destination.published(Observation { file, stamp });
         after_verify();
         let target = self.destination.directory.physical.join(&self.destination.leaf);
         let temporary = self.temporary.take().ok_or_else(|| io::Error::other("Staged file already committed"))?;
-        temporary.persist(&target).map_err(|e| io::Error::other(e.to_string()))?;
+        if let Err(persist_err) = temporary.persist(&target) {
+            let temp_path = persist_err.file.path();
+            if let Err(copy_err) = std::fs::copy(temp_path, &target) {
+                return Err(io::Error::other(format!(
+                    "failed to persist temporary file: {copy_err} (original rename error: {})",
+                    persist_err.error
+                )));
+            }
+        }
         self.committed = true;
         after_rename();
+        let observation = Observation::capture(&self.destination.directory, &self.destination.leaf, false)?
+            .ok_or_else(|| io::Error::other("Published file not found at destination"))?;
+        let destination = self.destination.published(observation);
         let warning = destination.verify().err().map(|error| {
             format!(
                 "File was published, but its path binding changed; choose the path again: {error}"

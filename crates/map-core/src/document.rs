@@ -134,7 +134,10 @@ pub struct Document {
 }
 
 impl Document {
-    pub fn try_new(vmf: Vmf) -> Result<Self, EditError> {
+    pub fn try_new(mut vmf: Vmf) -> Result<Self, EditError> {
+        if vmf.validate_ids().is_err() {
+            vmf.deduplicate_ids();
+        }
         vmf.validate_ids()
             .map_err(|error| EditError::Invalid(error.to_string()))?;
         Ok(Self::new(vmf))

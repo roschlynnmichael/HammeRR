@@ -31,13 +31,22 @@ impl Install {
             .parent()
             .ok_or("game directory has no parent")?
             .to_owned();
-        let executable = root.join("cstrike_linux64");
-        if !executable.is_file() {
-            return Err(format!(
-                "Linux CS:S client not found at {}",
-                executable.display()
-            ));
-        }
+        #[cfg(windows)]
+        let candidates = ["cstrike_win64.exe", "cstrike.exe", "hl2.exe"];
+        #[cfg(not(windows))]
+        let candidates = ["cstrike_linux64", "cstrike_linux", "hl2_linux"];
+
+        let executable = candidates
+            .iter()
+            .map(|name| root.join(name))
+            .find(|path| path.is_file())
+            .ok_or_else(|| {
+                format!(
+                    "CS:S client executable not found in {} (checked: {})",
+                    root.display(),
+                    candidates.join(", ")
+                )
+            })?;
         let binding = Target::play(&root, &fs.game_dir, &executable)?;
         Ok(Self {
             root,
@@ -491,18 +500,33 @@ impl Run {
             "hammerr_launcher_",
             ".log",
         )?);
+        #[cfg(not(windows))]
         let mut library_paths = vec![install.root.join("bin/linux64")];
+        #[cfg(not(windows))]
         if let Some(paths) = std::env::var_os("LD_LIBRARY_PATH") {
             library_paths.extend(std::env::split_paths(&paths));
         }
+        #[cfg(not(windows))]
         let libraries = std::env::join_paths(library_paths).map_err(|e| e.to_string())?;
         checkpoint(LaunchCheckpoint::Boundary)?;
         install.verify()?;
-        let child = Command::new(&install.executable)
-            .current_dir(&install.root)
-            .env("LD_LIBRARY_PATH", libraries)
+        let mut cmd = Command::new(&install.executable);
+        cmd.current_dir(&install.root)
             .env("SteamAppId", "240")
-            .env("SteamGameId", "240")
+            .env("SteamGameId", "240");
+        #[cfg(not(windows))]
+        cmd.env("LD_LIBRARY_PATH", libraries);
+        #[cfg(windows)]
+        {
+            let mut bin_paths = vec![install.root.join("bin"), install.root.clone()];
+            if let Some(paths) = std::env::var_os("PATH") {
+                bin_paths.extend(std::env::split_paths(&paths));
+            }
+            if let Ok(paths) = std::env::join_paths(bin_paths) {
+                cmd.env("PATH", paths);
+            }
+        }
+        let child = cmd
             .args(["-game"])
             .arg(&install.game)
             .args([

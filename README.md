@@ -1,11 +1,11 @@
 # HammeRR
 
-**An AI-first Counter-Strike: Source map editor and compiler for Linux.**
+**An AI-first Counter-Strike: Source map editor and compiler for Windows and Linux.**
 
 Edit VMF maps with native game assets. Build playable BSPs with integrated visibility, lighting and engine physics.
 Humans and AI agents share the same editing operations, previews and Undo history.
 
-[![Estimated implementation: 76.6% across 107 equally weighted capability groups](docs/images/roadmap-progress.svg)](docs/status.md#group-completion)
+[![Estimated implementation: 76.6% across 107 equally weighted capability groups](docs/roadmap-progress.svg)](docs/status.md#group-completion)
 
 ![A HammeRR courtyard running in Counter-Strike: Source](docs/images/showcase-native-pool.png)
 
@@ -13,27 +13,69 @@ Humans and AI agents share the same editing operations, previews and Undo histor
 
 ## Quick start
 
-Requires Linux, Rust 1.92+, a C++20 compiler, Vulkan and Counter-Strike: Source installed through Steam.
+Requires Windows or Linux, Rust 1.82+, and Counter-Strike: Source installed through Steam.
+
+### Windows
+
+```powershell
+# Build release binaries
+cargo build --release --bins
+
+# Run the editor (omit map path to create a new map)
+.\target\release\editor.exe path\to\map.vmf
+
+# Or compile a map directly via CLI
+.\target\release\hammerr-compile.exe path\to\map.vmf
+```
+
+### Linux
 
 ```sh
 cargo build --release -j8 -p editor -p editor-core -p compiler -p native-runtime
 ./target/release/editor path/to/map.vmf
 ```
 
-Omit the map path for a new map. Game content is found through Steam.
+Omit the map path for a new map. Game content is automatically discovered through Steam.
 See [Getting started](docs/getting-started.md) for custom content and launch options.
-The compiler is experimental; see [Status](docs/status.md).
 
-## MCP
+### Working with Maps
 
-Connect to the live editor at `http://127.0.0.1:7377/mcp`:
+1. **Open / Create Maps:**
+   - Double-click `editor.exe` or run `.\target\release\editor.exe <path-to-map.vmf>`.
+   - Use **File → Open** (`Ctrl+O`) to load existing Source SDK `.vmf` files, or start with an empty map.
+2. **Editing:**
+   - Build brushes, clip shapes, sculpt terrain, place entities, and apply materials using the 3D viewport.
+3. **Compile & Run Game:**
+   - Press **F9** or click **Run Map** in the toolbar.
+   - HammeRR will compile the map to `.bsp` and automatically launch Counter-Strike: Source into your map with the console active.
 
-```json
-{"mcpServers":{"hammerr":{"url":"http://127.0.0.1:7377/mcp"}}}
-```
+## MCP (AI Agent Map Editing)
 
-Agents can edit, render, compile and launch maps. Use `hammerr-headless` for a private session without a window.
-See the [tool index and setup](docs/mcp.md).
+HammeRR runs an embedded HTTP Model Context Protocol (MCP) server at `http://127.0.0.1:7377/mcp` while the editor is running.
+
+AI agents (such as Claude Code) can inspect, edit, render, compile, and launch maps in real time.
+
+### Connect Claude Code (with local Ollama)
+
+1. **Register the MCP server with Claude Code:**
+   ```powershell
+   claude mcp add --transport http hammerr http://127.0.0.1:7377/mcp --scope user
+   ```
+   *(Or keep `.mcp.json` in your project root with `{"mcpServers": {"hammerr": {"url": "http://127.0.0.1:7377/mcp"}}}`)*
+
+2. **Launch Claude Code via Ollama:**
+   ```powershell
+   ollama launch claude
+   ```
+
+3. **Verify Connection:**
+   In Claude Code, type `/mcp` to see `hammerr` and its suite of tools (`geometry`, `entities`, `materials`, `selection`, `view`, etc.).
+
+4. **Agent Workflow:**
+   - Give the agent instructions: *"Create a 512x512 room at origin"*, *"Spawn 4 CT and 4 T spawn points"*, or *"Add a warm light_environment pointing down 45 degrees"*.
+   - View the action in HammeRR's **Agent** panel and approve changes via the 3D viewport's **Agent preview** (Apply / Cancel).
+
+See the [tool index and setup](docs/mcp.md) for full protocol details.
 
 ## The editor
 

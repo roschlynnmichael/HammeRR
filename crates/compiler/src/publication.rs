@@ -94,8 +94,6 @@ impl FileStamp {
         }
         let current = Self::capture_kind(&self.requested, true)?;
         let same = self.path == current.path && current.kind == 2 && self.same_file(&current);
-        #[cfg(not(unix))]
-        let same = same && self.stamp == current.stamp;
         if !same {
             return Err(io::Error::other(format!(
                 "Build source lookup directory changed identity: {}",
@@ -380,7 +378,21 @@ impl OutputLease {
             use std::os::unix::fs::OpenOptionsExt;
             options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
         }
-        let lock = options.open(lock_path)?;
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::OpenOptionsExt;
+            options.share_mode(0);
+        }
+        let lock = match options.open(lock_path) {
+            Ok(file) => file,
+            #[cfg(windows)]
+            Err(error) if error.raw_os_error() == Some(32) => {
+                return Err(io::Error::other(
+                    "Another reflection build owns this output destination",
+                ));
+            }
+            Err(error) => return Err(error),
+        };
         if !lock.metadata()?.is_file() {
             return Err(io::Error::other(
                 "Reflection output lease is not a regular file",
@@ -395,26 +407,23 @@ impl OutputLease {
                 ));
             }
         }
-        #[cfg(not(all(target_os = "linux", target_pointer_width = "64")))]
+        #[cfg(not(any(all(target_os = "linux", target_pointer_width = "64"), windows)))]
         {
             return Err(io::Error::new(
                 io::ErrorKind::Unsupported,
-                "Reflection output leases require Linux64",
+                "Reflection output leases require Linux64 or Windows",
             ));
         }
-        #[allow(unreachable_code)]
-        {
-            let identity = FileIdentity::capture(path, control)?;
-            if identity.path != destination {
-                return Err(io::Error::other(
-                    "Reflection output parent changed while acquiring its lease",
-                ));
-            }
-            Ok(Self {
-                identity,
-                _lock: lock,
-            })
+        let identity = FileIdentity::capture(path, control)?;
+        if identity.path != destination {
+            return Err(io::Error::other(
+                "Reflection output parent changed while acquiring its lease",
+            ));
         }
+        Ok(Self {
+            identity,
+            _lock: lock,
+        })
     }
 
     pub fn verify(&self, control: &Control) -> io::Result<()> {

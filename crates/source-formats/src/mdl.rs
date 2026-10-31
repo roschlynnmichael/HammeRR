@@ -36,37 +36,45 @@ impl ModelHeader {
         if data.len() < HEADER_BYTES || data.len() > MAX_MODEL_BYTES || &data[..4] != b"IDST" {
             return Err(invalid("model header size or IDST magic is invalid"));
         }
-        if ![44, 48].contains(&integer(data, 4)) {
-            return Err(invalid("only Source MDL versions 44 and 48 are supported"));
+        let version = integer(data, 4);
+        if !(35..=60).contains(&version) {
+            return Err(invalid("only Source MDL versions 35 to 60 are supported"));
         }
-        if integer(data, 76) as usize != data.len() {
-            return Err(invalid("model declared length does not match its file"));
+        let declared = integer(data, 76);
+        if declared <= 0 || (declared as usize) > data.len() {
+            return Err(invalid("model declared length exceeds file size"));
         }
-        let skins = integer(data, 224);
-        if !(1..=65_535).contains(&skins) {
-            return Err(invalid("model skin-family count exceeds supported bounds"));
+        let skins = integer(data, 224).clamp(1, 65_535) as usize;
+        let mut hull_mins = vector(data, 104);
+        let mut hull_maxs = vector(data, 116);
+        let mut render_mins = vector(data, 128);
+        let mut render_maxs = vector(data, 140);
+        for i in 0..3 {
+            if !hull_mins[i].is_finite() { hull_mins[i] = -16.0; }
+            if !hull_maxs[i].is_finite() { hull_maxs[i] = 16.0; }
+            if hull_mins[i] > hull_maxs[i] {
+                std::mem::swap(&mut hull_mins[i], &mut hull_maxs[i]);
+            }
+            if !render_mins[i].is_finite() { render_mins[i] = hull_mins[i]; }
+            if !render_maxs[i].is_finite() { render_maxs[i] = hull_maxs[i]; }
+            if render_mins[i] > render_maxs[i] {
+                std::mem::swap(&mut render_mins[i], &mut render_maxs[i]);
+            }
+        }
+        let mut illumination = vector(data, 92);
+        if illumination.iter().any(|v| !v.is_finite()) {
+            illumination = [0.0, 0.0, 0.0];
         }
         let result = Self {
             checksum: integer(data, 8),
             flags: integer(data, 152) as u32,
-            hull_mins: vector(data, 104),
-            hull_maxs: vector(data, 116),
-            render_mins: vector(data, 128),
-            render_maxs: vector(data, 140),
-            illumination: vector(data, 92),
-            skins: skins as usize,
+            hull_mins,
+            hull_maxs,
+            render_mins,
+            render_maxs,
+            illumination,
+            skins,
         };
-        if result.illumination.iter().any(|v| !v.is_finite()) {
-            return Err(invalid("model illumination position must be finite"));
-        }
-        for (mins, maxs) in [
-            (result.hull_mins, result.hull_maxs),
-            (result.render_mins, result.render_maxs),
-        ] {
-            if (0..3).any(|i| !mins[i].is_finite() || !maxs[i].is_finite() || mins[i] > maxs[i]) {
-                return Err(invalid("model bounds must be finite and ordered"));
-            }
-        }
         Ok(result)
     }
 

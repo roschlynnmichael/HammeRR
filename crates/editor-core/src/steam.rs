@@ -63,7 +63,15 @@ pub fn sample_maps_dir(gameinfo: &Path) -> Option<PathBuf> {
 }
 
 pub fn find_css_fgd(game: &GameFs) -> Option<PathBuf> {
-    let mut paths = vec![game.game_dir.join("cstrike.fgd")];
+    let mut paths = vec![
+        game.base_dir.join("bin/cstrike.fgd"),
+        game.base_dir.join("bin/halflife2.fgd"),
+        game.game_dir.join("cstrike.fgd"),
+        game.game_dir.join("bin/cstrike.fgd"),
+    ];
+    if let Some(parent) = game.game_dir.parent() {
+        paths.push(parent.join("bin/cstrike.fgd"));
+    }
     if let Some(common) = game.game_dir.parent().and_then(Path::parent) {
         paths.extend(
             ["SourceSDK", "sourcesdk"]

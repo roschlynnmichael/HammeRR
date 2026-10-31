@@ -1640,8 +1640,10 @@ impl Session {
             .read_existing()
             .map_err(|error| format!("{}: {error}", path.display()))?
             .ok_or_else(|| format!("{}: source map does not exist", path.display()))?;
-        let text =
-            String::from_utf8(bytes).map_err(|error| format!("{}: {error}", path.display()))?;
+        let text = match String::from_utf8(bytes) {
+            Ok(s) => s,
+            Err(e) => String::from_utf8_lossy(e.as_bytes()).into_owned(),
+        };
         let vmf = Vmf::parse(&text).map_err(|e| format!("{}: {e}", path.display()))?;
         let document =
             Document::try_new(vmf).map_err(|error| format!("{}: {error}", path.display()))?;

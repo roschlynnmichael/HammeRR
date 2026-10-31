@@ -121,7 +121,13 @@ pub struct Vmf {
 
 impl Vmf {
     pub fn parse(src: &str) -> Result<Self, Error> {
-        Self::from_nodes(&keyvalues::parse(src)?)
+        match keyvalues::parse(src) {
+            Ok(nodes) => Self::from_nodes(&nodes),
+            Err(e) => match keyvalues::parse_lenient(src) {
+                Ok(nodes) => Self::from_nodes(&nodes),
+                Err(_) => Err(invalid("(root)", e.to_string())),
+            },
+        }
     }
 
     pub fn from_nodes(nodes: &[Node]) -> Result<Self, Error> {
@@ -268,6 +274,63 @@ impl Vmf {
         }
         Ok(())
     }
+
+    pub fn deduplicate_ids(&mut self) {
+        let mut object_max = self.object_ids().max().unwrap_or(0);
+        let mut seen_objects = std::collections::HashSet::new();
+        seen_objects.insert(self.world.id);
+        for group in &mut self.world.groups {
+            if !seen_objects.insert(group.id) {
+                object_max += 1;
+                group.id = object_max;
+                seen_objects.insert(group.id);
+            }
+        }
+        for solid in &mut self.world.solids {
+            if !seen_objects.insert(solid.id) {
+                object_max += 1;
+                solid.id = object_max;
+                seen_objects.insert(solid.id);
+            }
+        }
+        for entity in &mut self.entities {
+            if !seen_objects.insert(entity.id) {
+                object_max += 1;
+                entity.id = object_max;
+                seen_objects.insert(entity.id);
+            }
+            for solid in &mut entity.solids {
+                if !seen_objects.insert(solid.id) {
+                    object_max += 1;
+                    solid.id = object_max;
+                    seen_objects.insert(solid.id);
+                }
+            }
+        }
+
+        let mut side_max = self.side_ids().max().unwrap_or(0);
+        let mut seen_sides = std::collections::HashSet::new();
+        for solid in &mut self.world.solids {
+            for side in &mut solid.sides {
+                if !seen_sides.insert(side.id) {
+                    side_max += 1;
+                    side.id = side_max;
+                    seen_sides.insert(side.id);
+                }
+            }
+        }
+        for entity in &mut self.entities {
+            for solid in &mut entity.solids {
+                for side in &mut solid.sides {
+                    if !seen_sides.insert(side.id) {
+                        side_max += 1;
+                        side.id = side_max;
+                        seen_sides.insert(side.id);
+                    }
+                }
+            }
+        }
+    }
 }
 
 fn all_blocks_named(children: &[Node], key: &str) -> bool {
@@ -294,7 +357,13 @@ fn parse_with<T>(
 }
 
 fn parse_from_str<T: std::str::FromStr>(value: &str, path: &str, key: &str) -> Result<T, Error> {
-    parse_with(value, path, key, |s| s.parse().ok())
+    parse_with(value.trim(), path, key, |s| s.parse().ok())
+}
+
+fn parse_u32(value: &str, path: &str, key: &str) -> Result<u32, Error> {
+    parse_with(value.trim(), path, key, |s| {
+        s.parse::<u32>().ok().or_else(|| s.parse::<f64>().ok().map(|f| f as u32))
+    })
 }
 
 fn required<T>(value: Option<T>, path: &str, key: &str) -> Result<T, Error> {
@@ -400,7 +469,7 @@ impl World {
         for node in children {
             match (&node.value, node.key.as_str()) {
                 (Value::String(v), "id") if id.is_none() => {
-                    id = Some(parse_from_str(v, path, "id")?)
+                    id = Some(parse_u32(v, path, "id")?)
                 }
                 (Value::String(v), _) => properties.0.push((node.key.clone(), v.clone())),
                 (Value::Block(c), "solid") => solids.push(Solid::parse(c, path, false)?),
@@ -456,7 +525,7 @@ impl Group {
         for node in children {
             match (&node.value, node.key.as_str()) {
                 (Value::String(v), "id") if id.is_none() => {
-                    id = Some(parse_from_str(v, &path, "id")?)
+                    id = Some(parse_u32(v, &path, "id")?)
                 }
                 (Value::String(v), _) => extra_properties.0.push((node.key.clone(), v.clone())),
                 (Value::Block(c), "editor") if editor.is_none() => {
@@ -577,7 +646,7 @@ impl Entity {
         for node in children {
             match (&node.value, node.key.as_str()) {
                 (Value::String(v), "id") if id.is_none() => {
-                    id = Some(parse_from_str(v, &path, "id")?)
+                    id = Some(parse_u32(v, &path, "id")?)
                 }
                 (Value::String(v), _) => {
                     properties.0.push((node.key.clone(), v.clone()));
@@ -710,7 +779,7 @@ impl Solid {
         for node in children {
             match (&node.value, node.key.as_str()) {
                 (Value::String(v), "id") if id.is_none() => {
-                    id = Some(parse_from_str(v, &path, "id")?)
+                    id = Some(parse_u32(v, &path, "id")?)
                 }
                 (Value::String(v), _) => extra_properties.0.push((node.key.clone(), v.clone())),
                 (Value::Block(c), "side") => sides.push(Side::parse(c, &path)?),
@@ -774,7 +843,7 @@ impl Side {
         let mut extra = Vec::new();
         for node in children {
             match (&node.value, node.key.as_str()) {
-                (Value::String(v), "id") => id = Some(parse_from_str(v, &path, "id")?),
+                (Value::String(v), "id") => id = Some(parse_u32(v, &path, "id")?),
                 (Value::String(v), "plane") => {
                     plane = Some(parse_with(v, &path, "plane", Plane::parse)?)
                 }
@@ -787,10 +856,10 @@ impl Side {
                 }
                 (Value::String(v), "rotation") => rotation = parse_from_str(v, &path, "rotation")?,
                 (Value::String(v), "lightmapscale") => {
-                    lightmap_scale = parse_from_str(v, &path, "lightmapscale")?;
+                    lightmap_scale = parse_u32(v, &path, "lightmapscale")?;
                 }
                 (Value::String(v), "smoothing_groups") => {
-                    smoothing_groups = Some(parse_from_str(v, &path, "smoothing_groups")?);
+                    smoothing_groups = Some(parse_u32(v, &path, "smoothing_groups")?);
                 }
                 (Value::String(v), _) => extra_properties.0.push((node.key.clone(), v.clone())),
                 (Value::Block(c), "dispinfo") if displacement.is_none() => {
